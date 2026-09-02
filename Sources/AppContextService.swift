@@ -24,7 +24,7 @@ struct AppContext {
 
 /// Reads lightweight, on-device context about the app the user is dictating
 /// into: frontmost app identity, focused window title, and selected text via
-/// the accessibility APIs. Megaphone is local-only; nothing here talks to a
+/// the accessibility APIs. Zarathustra is local-only; nothing here talks to a
 /// network.
 final class AppContextService {
     /// How much text before the caret is captured as continuation context.
@@ -53,7 +53,7 @@ final class AppContextService {
 
     /// Selects `text` only when it is still immediately before the caret in
     /// the focused editable element. This makes follow-up edits safe: if the
-    /// user moved the caret or changed the content, Megaphone leaves it alone.
+    /// user moved the caret or changed the content, Zarathustra leaves it alone.
     func selectTextImmediatelyBeforeCaret(matching text: String) -> Bool {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return false }
         let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)

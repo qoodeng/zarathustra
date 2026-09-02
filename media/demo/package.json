@@ -1,10 +1,10 @@
 {
-  "name": "megaphone-intro",
+  "name": "zarathustra-intro",
   "private": true,
   "version": "1.0.0",
   "scripts": {
     "start": "remotion studio src/index.ts",
-    "render": "remotion render src/index.ts MegaphoneIntro out/megaphone-intro.mp4",
+    "render": "remotion render src/index.ts ZarathustraIntro out/zarathustra-intro.mp4",
     "render:gifs": "sh scripts/export-gifs.sh"
   },
   "dependencies": {

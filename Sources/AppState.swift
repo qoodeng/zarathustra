@@ -7,7 +7,7 @@ import ApplicationServices
 import ScreenCaptureKit
 import Carbon
 import os.log
-private let recordingLog = OSLog(subsystem: "com.kuberwastaken.megaphone", category: "Recording")
+private let recordingLog = OSLog(subsystem: "com.qoodeng.zarathustra", category: "Recording")
 
 struct VoiceMacro: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
@@ -77,7 +77,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
 enum AppBuild {
     static var isDevBundle: Bool {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) == "Megaphone Dev"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) == "Zarathustra Dev"
     }
 }
 
@@ -249,7 +249,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let voiceMacrosStorageKey = "voice_macros"
     private let userTransformsStorageKey = "user_transforms"
     private let wakeCommandsEnabledStorageKey = "wake_commands_enabled"
-    private let plainMegaphoneWakeWordEnabledStorageKey = "plain_megaphone_wake_word_enabled"
+    private let plainZarathustraWakeWordEnabledStorageKey = "plain_zarathustra_wake_word_enabled"
     private let wakeScreenContextEnabledStorageKey = "wake_screen_context_enabled"
     private let commandModeEnabledStorageKey = "command_mode_enabled"
     private let commandModeStyleStorageKey = "command_mode_style"
@@ -576,9 +576,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         TransformStore.resolved(userTransforms: userTransforms)
     }
 
-    @Published var plainMegaphoneWakeWordEnabled: Bool {
+    @Published var plainZarathustraWakeWordEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(plainMegaphoneWakeWordEnabled, forKey: plainMegaphoneWakeWordEnabledStorageKey)
+            UserDefaults.standard.set(plainZarathustraWakeWordEnabled, forKey: plainZarathustraWakeWordEnabledStorageKey)
         }
     }
 
@@ -778,8 +778,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         } else {
             initialUserTransforms = []
         }
-        let plainMegaphoneWakeWordEnabled = UserDefaults.standard.bool(
-            forKey: plainMegaphoneWakeWordEnabledStorageKey
+        let plainZarathustraWakeWordEnabled = UserDefaults.standard.bool(
+            forKey: plainZarathustraWakeWordEnabledStorageKey
         )
         let wakeCommandsEnabled = UserDefaults.standard.object(forKey: wakeCommandsEnabledStorageKey) == nil
             ? true
@@ -844,7 +844,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.userTransforms = initialUserTransforms
         self.wakeCommandsEnabled = wakeCommandsEnabled
         self.wakeScreenContextEnabled = wakeScreenContextEnabled
-        self.plainMegaphoneWakeWordEnabled = plainMegaphoneWakeWordEnabled
+        self.plainZarathustraWakeWordEnabled = plainZarathustraWakeWordEnabled
         self.pipelineHistory = savedHistory
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
@@ -1056,7 +1056,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         return audioDir
     }
 
-    /// URL of the flag file written while Megaphone is actively recording.
+    /// URL of the flag file written while Zarathustra is actively recording.
     ///
     /// External tools (voice assistants, TTS barge-in pipelines, conversation
     /// apps) can poll this file to know when the user is dictating. The file
@@ -1064,18 +1064,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Contents are the UNIX timestamp (seconds, float) of when recording
     /// started — useful for stale-flag detection after an unclean exit.
     ///
-    /// Path: `~/Library/Application Support/Megaphone/is-recording`
-    /// (or `Megaphone Dev/is-recording` when running the dev bundle).
+    /// Path: `~/Library/Application Support/Zarathustra/is-recording`
+    /// (or `Zarathustra Dev/is-recording` when running the dev bundle).
     static func recordingStateFlagURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Megaphone"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Zarathustra"
         return appSupport.appendingPathComponent("\(appName)/is-recording")
     }
 
     /// Serial queue that owns every flag-file I/O so the recording
     /// start/stop hot path never blocks on disk.
     private static let recordingStateFlagQueue = DispatchQueue(
-        label: "com.kuberwastaken.megaphone.recording-state-flag"
+        label: "com.qoodeng.zarathustra.recording-state-flag"
     )
 
     /// Write or clear the `is-recording` flag file. Called from the
@@ -1197,7 +1197,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     outputLanguage: self.outputLanguage,
                     cleanupMode: self.smartCleanupMode,
                     wakeCommandsEnabled: self.wakeCommandsEnabled,
-                    plainMegaphoneWakeWordEnabled: self.plainMegaphoneWakeWordEnabled
+                    plainZarathustraWakeWordEnabled: self.plainZarathustraWakeWordEnabled
                 )
                 finalTranscript = result.finalTranscript
                 processingStatus = Self.statusMessage(
@@ -1868,7 +1868,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// After a successful revert the literal transcript is what sits before
     /// the caret, so it becomes the tracked previous text: follow-up wake
-    /// commands ("megaphone, make that shorter") must edit the reverted
+    /// commands ("zarathustra, make that shorter") must edit the reverted
     /// words, and Paste Again must repeat them.
     @MainActor
     private func recordRawRevert(of item: PipelineHistoryItem, rawTranscript: String) {
@@ -2272,13 +2272,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func beginCriticalDictationActivity() {
         guard !automaticTerminationDisabled else { return }
-        ProcessInfo.processInfo.disableAutomaticTermination("Megaphone dictation in progress")
+        ProcessInfo.processInfo.disableAutomaticTermination("Zarathustra dictation in progress")
         automaticTerminationDisabled = true
     }
 
     private func endCriticalDictationActivity() {
         guard automaticTerminationDisabled else { return }
-        ProcessInfo.processInfo.enableAutomaticTermination("Megaphone dictation in progress")
+        ProcessInfo.processInfo.enableAutomaticTermination("Zarathustra dictation in progress")
         automaticTerminationDisabled = false
     }
 
@@ -2679,7 +2679,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         outputLanguage: String = "",
         cleanupMode: SmartCleanupMode,
         wakeCommandsEnabled: Bool,
-        plainMegaphoneWakeWordEnabled: Bool,
+        plainZarathustraWakeWordEnabled: Bool,
         previousText: String? = nil,
         smartSessionID: UUID? = nil
     ) async -> (
@@ -2709,7 +2709,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         if wakeCommandsEnabled, case .dictation = intent, let wake = WakePhraseMatcher.detect(
             in: trimmedRawTranscript,
-            plainMegaphoneEnabled: plainMegaphoneWakeWordEnabled
+            plainZarathustraEnabled: plainZarathustraWakeWordEnabled
         ) {
             let command = wake.trailingText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !command.isEmpty else {
@@ -3036,7 +3036,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         outputLanguage: self.outputLanguage,
                         cleanupMode: self.smartCleanupMode,
                         wakeCommandsEnabled: self.wakeCommandsEnabled,
-                        plainMegaphoneWakeWordEnabled: self.plainMegaphoneWakeWordEnabled,
+                        plainZarathustraWakeWordEnabled: self.plainZarathustraWakeWordEnabled,
                         previousText: previousText,
                         smartSessionID: cleanupSessionID
                     )

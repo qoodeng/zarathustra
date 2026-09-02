@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://megaphone.kuber.studio/sitemap.xml
+Sitemap: https://qoodeng.github.io/zarathustra/sitemap.xml

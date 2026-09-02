@@ -1,7 +1,7 @@
 import Foundation
 
 /// A named, reusable rewrite directive applied to the user's most recent
-/// dictation by voice: "Hey Megaphone, polish that".
+/// dictation by voice: "Hey Zarathustra, polish that".
 struct Transform: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String

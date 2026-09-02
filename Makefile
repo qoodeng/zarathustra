@@ -1,8 +1,8 @@
-APP_NAME ?= Megaphone Dev
-BUNDLE_ID ?= com.kuberwastaken.megaphone.dev
+APP_NAME ?= Zarathustra Dev
+BUNDLE_ID ?= com.qoodeng.zarathustra.dev
 BUILD_DIR = build
 APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
-CODESIGN_IDENTITY ?= Megaphone Dev
+CODESIGN_IDENTITY ?= -
 CONTENTS = $(APP_BUNDLE)/Contents
 MACOS_DIR = $(CONTENTS)/MacOS
 empty :=
@@ -12,7 +12,7 @@ APP_EXECUTABLE_TARGET := $(subst $(space),\ ,$(APP_EXECUTABLE))
 
 SOURCES = $(shell find Sources -name '*.swift' -type f | LC_ALL=C sort)
 LAUNCHER_SOURCES = $(shell find Launcher -name '*.swift' -type f | LC_ALL=C sort)
-TEST_RUNNER = $(BUILD_DIR)/MegaphoneTests
+TEST_RUNNER = $(BUILD_DIR)/ZarathustraTests
 RESOURCES = $(CONTENTS)/Resources
 ARCH ?= $(shell uname -m)
 
@@ -25,8 +25,8 @@ CORE_EXECUTABLE = $(MACOS_DIR)/$(CORE_NAME)
 
 # Pick the icon source based on which bundle we are building. Dev builds get
 # a distinct hammer-on-waveform icon so a developer's dock shows at a glance
-# which Megaphone they are running when both are installed side by side.
-ifeq ($(APP_NAME),Megaphone Dev)
+# which Zarathustra they are running when both are installed side by side.
+ifeq ($(APP_NAME),Zarathustra Dev)
 ICON_SOURCE = Resources/AppIcon-Dev-Source.png
 ICON_ICNS = Resources/AppIcon-Dev.icns
 else
@@ -91,14 +91,14 @@ endif
 	@plutil -replace CFBundleName -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleDisplayName -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleExecutable -string "$(APP_NAME)" "$(CONTENTS)/Info.plist"
-	@plutil -replace MegaphoneCoreExecutable -string "$(CORE_NAME)" "$(CONTENTS)/Info.plist"
+	@plutil -replace ZarathustraCoreExecutable -string "$(CORE_NAME)" "$(CONTENTS)/Info.plist"
 	@plutil -replace CFBundleIdentifier -string "$(BUNDLE_ID)" "$(CONTENTS)/Info.plist"
 	@cp $(ICON_ICNS) "$(RESOURCES)/AppIcon.icns"
 	@plutil -replace NSMicrophoneUsageDescription -string "$(APP_NAME) needs microphone access to transcribe your speech." "$(CONTENTS)/Info.plist"
 	@plutil -replace NSSpeechRecognitionUsageDescription -string "$(APP_NAME) needs speech recognition to convert your voice to text." "$(CONTENTS)/Info.plist"
-	@plutil -replace NSAccessibilityUsageDescription -string "$(APP_NAME) needs accessibility access to detect the text cursor position and paste transcribed text." "$(CONTENTS)/Info.plist"
-	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements Megaphone.entitlements "$(CORE_EXECUTABLE)"
-	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements Megaphone.entitlements "$(APP_BUNDLE)"
+	@plutil -replace NSAccessibilityUsageDescription -string "$(APP_NAME) uses accessibility to read selected or nearby text for on-device context and insert your result into the active app." "$(CONTENTS)/Info.plist"
+	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements Zarathustra.entitlements "$(CORE_EXECUTABLE)"
+	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements Zarathustra.entitlements "$(APP_BUNDLE)"
 	@echo "Built $(APP_BUNDLE)"
 
 test: $(TEST_RUNNER)

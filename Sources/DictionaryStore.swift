@@ -93,13 +93,13 @@ enum DictionaryStoreError: LocalizedError, Equatable {
 struct DictionaryExportDocument: Codable {
     static let currentVersion = 1
 
-    var megaphoneDictionaryVersion: Int
+    var zarathustraDictionaryVersion: Int
     var exportedAt: Date
     var entries: [DictionaryEntry]
     var exactCorrections: String
 
     init(entries: [DictionaryEntry], exactCorrections: String, exportedAt: Date = Date()) {
-        self.megaphoneDictionaryVersion = Self.currentVersion
+        self.zarathustraDictionaryVersion = Self.currentVersion
         self.exportedAt = exportedAt
         self.entries = entries
         self.exactCorrections = exactCorrections
@@ -109,7 +109,7 @@ struct DictionaryExportDocument: Codable {
     /// (for example one with corrections removed) still imports.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        megaphoneDictionaryVersion = try container.decode(Int.self, forKey: .megaphoneDictionaryVersion)
+        zarathustraDictionaryVersion = try container.decode(Int.self, forKey: .zarathustraDictionaryVersion)
         exportedAt = try container.decodeIfPresent(Date.self, forKey: .exportedAt) ?? Date()
         entries = try container.decodeIfPresent([DictionaryEntry].self, forKey: .entries) ?? []
         exactCorrections = try container.decodeIfPresent(String.self, forKey: .exactCorrections) ?? ""

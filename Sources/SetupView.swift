@@ -9,7 +9,7 @@ struct SetupView: View {
     var onComplete: () -> Void
     @EnvironmentObject var appState: AppState
     @Environment(\.openURL) private var openURL
-    private let megaphoneRepoURL = URL(string: "https://github.com/Kuberwastaken/megaphone")!
+    private let zarathustraRepoURL = URL(string: "https://github.com/qoodeng/zarathustra")!
     private enum SetupStep: Int, CaseIterable {
         case welcome = 0
         case micPermission
@@ -36,7 +36,6 @@ struct SetupView: View {
         guardrails: .permissiveContentTransformations
     ).availability
     @State private var customVocabularyInput: String = ""
-    @StateObject private var githubCache = GitHubMetadataCache.shared
 
     // Test transcription state
     private enum TestPhase: Equatable {
@@ -158,9 +157,6 @@ struct SetupView: View {
             customVocabularyInput = appState.customVocabulary
             checkMicPermission()
             checkAccessibility()
-            Task {
-                await githubCache.fetchIfNeeded()
-            }
         }
         .onDisappear {
             accessibilityTimer?.invalidate()
@@ -228,21 +224,14 @@ struct SetupView: View {
 
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    AsyncImage(url: URL(string: "https://github.com/Kuberwastaken.png?size=88")) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        default:
-                            Color.gray.opacity(0.2)
-                        }
-                    }
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .foregroundStyle(.secondary)
                     .frame(width: 26, height: 26)
-                    .clipShape(Circle())
 
                     Button {
-                        openURL(megaphoneRepoURL)
+                        openURL(zarathustraRepoURL)
                     } label: {
-                        Text("Kuberwastaken/megaphone")
+                        Text("qoodeng/zarathustra")
                             .font(.system(.caption, design: .monospaced).weight(.medium))
                     }
                     .buttonStyle(.plain)
@@ -251,23 +240,18 @@ struct SetupView: View {
                     Spacer()
 
                     HStack(spacing: 4) {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.yellow)
+                        Image(systemName: "lock.shield")
                             .font(.caption2)
-                        if githubCache.isLoading {
-                            ProgressView().scaleEffect(0.5)
-                        } else if let count = githubCache.starCount {
-                            Text("\(count.formatted()) \(count == 1 ? "star" : "stars")")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("Open source")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Capsule().fill(Color.yellow.opacity(0.14)))
 
                     Button {
-                        openURL(megaphoneRepoURL)
+                        openURL(zarathustraRepoURL)
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "star")
@@ -281,40 +265,6 @@ struct SetupView: View {
                     .buttonStyle(.plain)
                 }
 
-                if !githubCache.recentContributors.isEmpty {
-                    Divider()
-                    HStack(spacing: 8) {
-                        HStack(spacing: -6) {
-                            ForEach(githubCache.recentContributors) { contributor in
-                                Button {
-                                    openURL(contributor.htmlUrl)
-                                } label: {
-                                    AsyncImage(url: contributor.avatarThumbnailUrl) { phase in
-                                        switch phase {
-                                        case .success(let image):
-                                            image.resizable().aspectRatio(contentMode: .fill)
-                                        default:
-                                            Color.gray.opacity(0.2)
-                                        }
-                                    }
-                                    .frame(width: 22, height: 22)
-                                    .clipShape(Circle())
-                                    .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(Text(contributor.login))
-                                .accessibilityHint(Text("Open contributor profile"))
-                            }
-                        }
-                        .clipped()
-                        Text("recent contributors")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .fixedSize()
-                        Spacer()
-                    }
-                    .clipped()
-                }
             }
             .padding(12)
             .background(
@@ -1273,7 +1223,7 @@ class GitHubMetadataCache: ObservableObject {
 
     private var lastFetchDate: Date?
     private let cacheDuration: TimeInterval = 5 * 60 // 5 minutes
-    private let repoAPIURL = URL(string: "https://api.github.com/repos/Kuberwastaken/megaphone")!
+    private let repoAPIURL = URL(string: "https://api.github.com/repos/qoodeng/zarathustra")!
 
     private init() {}
 
@@ -1296,7 +1246,7 @@ class GitHubMetadataCache: ObservableObject {
             if count > 0 {
                 let perPage = 100
                 let lastPage = max(1, Int(ceil(Double(count) / Double(perPage))))
-                let stargazersURL = URL(string: "https://api.github.com/repos/Kuberwastaken/megaphone/stargazers?per_page=\(perPage)&page=\(lastPage)")!
+                let stargazersURL = URL(string: "https://api.github.com/repos/qoodeng/zarathustra/stargazers?per_page=\(perPage)&page=\(lastPage)")!
                 var request = URLRequest(url: stargazersURL)
                 request.setValue("application/vnd.github.v3.star+json", forHTTPHeaderField: "Accept")
                 let starredResult = try await URLSession.shared.data(for: request)
@@ -1308,7 +1258,7 @@ class GitHubMetadataCache: ObservableObject {
             }
 
             var contributors: [GitHubContributor] = []
-            let contributorsURL = URL(string: "https://api.github.com/repos/Kuberwastaken/megaphone/contributors?per_page=15")!
+            let contributorsURL = URL(string: "https://api.github.com/repos/qoodeng/zarathustra/contributors?per_page=15")!
             do {
                 let contributorsResult = try await URLSession.shared.data(from: contributorsURL)
                 if let contribHTTP = contributorsResult.1 as? HTTPURLResponse,

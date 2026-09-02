@@ -9,7 +9,7 @@ render_gif() {
   output="$3"
 
   ffmpeg -y -hide_banner -loglevel error \
-    -i out/megaphone-intro.mp4 \
+    -i out/zarathustra-intro.mp4 \
     -filter_complex "fps=20,scale=${width}:${height}:flags=lanczos,split[a][b];[a]palettegen=max_colors=192:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle" \
     -loop 0 "$output"
 }

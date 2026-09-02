@@ -1,14 +1,14 @@
 import AppKit
 import Darwin
 
-// Megaphone's real binary is compiled against the macOS 26 SDK, so on older
+// Zarathustra's real binary is compiled against the macOS 26 SDK, so on older
 // systems Launch Services refuses to start it with the opaque error -10825
 // instead of saying why. This launcher is the bundle's main executable and
 // deploys back to macOS 13: on macOS 26+ it replaces itself with the core
 // binary via execv, and on anything older it explains the requirement.
 @main
 @MainActor
-enum MegaphoneLauncher {
+enum ZarathustraLauncher {
     static func main() {
         if #available(macOS 26.0, *) {
             launchCore()
@@ -18,12 +18,12 @@ enum MegaphoneLauncher {
     }
 
     private static var appName: String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? "Megaphone"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? "Zarathustra"
     }
 
     private static func launchCore() -> Never {
         guard
-            let coreName = Bundle.main.object(forInfoDictionaryKey: "MegaphoneCoreExecutable") as? String,
+            let coreName = Bundle.main.object(forInfoDictionaryKey: "ZarathustraCoreExecutable") as? String,
             let launcherURL = Bundle.main.executableURL
         else {
             fail("This copy of \(appName) is missing its core executable metadata. Please reinstall it.")

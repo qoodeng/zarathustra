@@ -108,16 +108,6 @@ struct GitHubReleaseAsset: Decodable {
     }
 }
 
-private struct UpdateManifest: Decodable {
-    let schemaVersion: Int
-    let releases: [GitHubRelease]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case releases
-    }
-}
-
 private enum ReleaseLookupError: LocalizedError {
     case invalidResponse
     case httpStatus(Int, rateLimitReset: String?)
@@ -200,8 +190,7 @@ final class UpdateManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "updateLastPostTranscriptionReminderDate") }
     }
 
-    private let updateManifestURL = URL(string: "https://megaphone.kuber.studio/updates.json")!
-    private let releasesURL = URL(string: "https://api.github.com/repos/Kuberwastaken/megaphone/releases?per_page=100")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/qoodeng/zarathustra/releases?per_page=100")!
     private let stabilityBufferDays: TimeInterval = 3
     private let checkIntervalSeconds: TimeInterval = 7 * 24 * 60 * 60 // 7 days
     private let postTranscriptionReminderInterval: TimeInterval = 24 * 60 * 60 // 1 day
@@ -250,7 +239,7 @@ final class UpdateManager: ObservableObject {
 
     @MainActor
     func checkForUpdates(userInitiated: Bool) async {
-        let currentBuildTag = Bundle.main.infoDictionary?["MegaphoneBuildTag"] as? String
+        let currentBuildTag = Bundle.main.infoDictionary?["ZarathustraBuildTag"] as? String
         let currentVersionString = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
         // Dev builds (no embedded tag): skip auto-checks, but allow manual checks
@@ -340,25 +329,7 @@ final class UpdateManager: ObservableObject {
     }
 
     private func fetchReleases() async throws -> [GitHubRelease] {
-        do {
-            var request = URLRequest(url: updateManifestURL)
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ReleaseLookupError.invalidResponse
-            }
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw ReleaseLookupError.httpStatus(httpResponse.statusCode, rateLimitReset: nil)
-            }
-            let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)
-            guard manifest.schemaVersion == 1, !manifest.releases.isEmpty else {
-                throw ReleaseLookupError.invalidManifest
-            }
-            return manifest.releases
-        } catch {
-            return try await fetchReleasesFromGitHub()
-        }
+        try await fetchReleasesFromGitHub()
     }
 
     private func fetchReleasesFromGitHub() async throws -> [GitHubRelease] {
@@ -367,7 +338,7 @@ final class UpdateManager: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-        request.setValue("Megaphone/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Zarathustra/\(appVersion)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -785,7 +756,7 @@ final class UpdateManager: ObservableObject {
 
     private func performUpdate(downloadURL: URL, expectedSize: Int, expectedVersion: String) async {
         let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent("megaphone-update-\(UUID().uuidString)")
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("zarathustra-update-\(UUID().uuidString)")
 
         do {
             try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -794,7 +765,7 @@ final class UpdateManager: ObservableObject {
             return
         }
 
-        let dmgPath = tempDir.appendingPathComponent("Megaphone.dmg")
+        let dmgPath = tempDir.appendingPathComponent("Zarathustra.dmg")
 
         // MARK: Download phase
         updateStatus = .downloading
@@ -907,7 +878,7 @@ final class UpdateManager: ObservableObject {
             }
 
             // Copy app to staging directory
-            let stagingDir = fm.temporaryDirectory.appendingPathComponent("megaphone-staged-\(UUID().uuidString)")
+            let stagingDir = fm.temporaryDirectory.appendingPathComponent("zarathustra-staged-\(UUID().uuidString)")
             try fm.createDirectory(at: stagingDir, withIntermediateDirectories: true)
             do {
                 let stagedApp = stagingDir.appendingPathComponent(appBundle.lastPathComponent)
@@ -990,7 +961,7 @@ final class UpdateManager: ObservableObject {
         expectedVersion: String
     ) throws {
         guard let info = NSDictionary(contentsOf: stagedApp.appendingPathComponent("Contents/Info.plist")),
-              info["CFBundleIdentifier"] as? String == "com.kuberwastaken.megaphone",
+              info["CFBundleIdentifier"] as? String == "com.qoodeng.zarathustra",
               info["CFBundleShortVersionString"] as? String == expectedVersion else {
             throw NSError(domain: "UpdateManager", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "The downloaded app has an unexpected identity or version"
@@ -1055,13 +1026,13 @@ final class UpdateManager: ObservableObject {
         let currentAppPath = Bundle.main.bundlePath
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         let pid = String(ProcessInfo.processInfo.processIdentifier)
-        let backupPath = stagingDir.appendingPathComponent("Megaphone Backup.app").path
+        let backupPath = stagingDir.appendingPathComponent("Zarathustra Backup.app").path
         let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Megaphone", isDirectory: true)
+            .appendingPathComponent("Library/Logs/Zarathustra", isDirectory: true)
         try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
         let logPath = logsDirectory.appendingPathComponent("updater.log").path
 
-        // Keep the /Applications/Megaphone.app directory itself in place.
+        // Keep the /Applications/Zarathustra.app directory itself in place.
         // macOS App Management may reject renaming/removing that directory,
         // while allowing an updater to replace its children in place.
         let script = """

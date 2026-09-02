@@ -53,7 +53,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Turn on Apple Intelligence for Smart Cleanup"
-        alert.informativeText = "Smart Cleanup runs Apple's language model entirely on your Mac. You can turn it on now, or use Megaphone's instant Basic Cleanup instead."
+        alert.informativeText = "Smart Cleanup runs Apple's language model entirely on your Mac. You can turn it on now, or use Zarathustra's instant Basic Cleanup instead."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Use Basic")
         alert.addButton(withTitle: "Not Now")
