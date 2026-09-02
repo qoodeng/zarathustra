@@ -27,7 +27,7 @@ enum DictionaryStoreTests {
 
         let first = try! store.addManual("  Zarathustra  ")
         _ = try! store.addManual("SpeechAnalyzer")
-        expectEqual(store.activeTerms, ["Zarathustra", "SpeechAnalyzer"])
+        expectEqual(store.activeTerms, ["SpeechAnalyzer", "Zarathustra"])
         store.setEnabled(false, for: first.id)
         expectEqual(store.activeTermsText, "SpeechAnalyzer")
         expectThrows(.duplicateTerm) { try store.addManual("zarathustra") }
