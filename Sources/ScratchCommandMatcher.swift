@@ -1,6 +1,6 @@
 import Foundation
 
-/// Recognizes whole-utterance "scratch that" commands that ask Megaphone to
+/// Recognizes whole-utterance "scratch that" commands that ask Zarathustra to
 /// delete the previously inserted dictation instead of pasting new text.
 ///
 /// Matching is deliberately strict: after trimming, casing, and punctuation

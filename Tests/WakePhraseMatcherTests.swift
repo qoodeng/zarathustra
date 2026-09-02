@@ -2,8 +2,8 @@ import Foundation
 
 enum WakePhraseMatcherTests {
     static func run() {
-        testHeyMegaphoneIsAlwaysRecognized()
-        testPlainMegaphoneToggle()
+        testHeyZarathustraIsAlwaysRecognized()
+        testPlainZarathustraToggle()
         testCommonRecognitionAliases()
         testHiddenRecognitionHints()
         testPhraseBoundariesAndPosition()
@@ -13,72 +13,58 @@ enum WakePhraseMatcherTests {
         testExplicitRearm()
     }
 
-    private static func testHeyMegaphoneIsAlwaysRecognized() {
+    private static func testHeyZarathustraIsAlwaysRecognized() {
         let cases = [
-            "hey megaphone",
-            "HEY MEGAPHONE",
-            "  Hey, Megaphone!",
-            "…hey—megaphone"
+            "hey zarathustra",
+            "HEY ZARATHUSTRA",
+            "  Hey, Zarathustra!",
+            "…hey—zarathustra"
         ]
         for transcript in cases {
             expectEqual(
                 WakePhraseMatcher.detect(in: transcript),
-                WakePhraseMatch(phrase: .heyMegaphone, trailingText: ""),
+                WakePhraseMatch(phrase: .heyZarathustra, trailingText: ""),
                 "Did not recognize \(transcript.debugDescription)"
             )
         }
     }
 
-    private static func testPlainMegaphoneToggle() {
-        expectEqual(WakePhraseMatcher.detect(in: "Megaphone"), nil)
+    private static func testPlainZarathustraToggle() {
+        expectEqual(WakePhraseMatcher.detect(in: "Zarathustra"), nil)
         expectEqual(
-            WakePhraseMatcher.detect(in: "Megaphone", plainMegaphoneEnabled: true),
-            WakePhraseMatch(phrase: .megaphone, trailingText: "")
+            WakePhraseMatcher.detect(in: "Zarathustra", plainZarathustraEnabled: true),
+            WakePhraseMatch(phrase: .zarathustra, trailingText: "")
         )
     }
 
     private static func testCommonRecognitionAliases() {
         let alwaysOn = [
-            "hey mega phone, write this",
-            "hey made a phone, write this",
-            "hey make a phone, write this",
-            "he megaphone, write this",
-            "he made a phone, write this",
-            "hay mega foam, write this",
-            "hi mega form, write this",
-            "hey megafoam, write this",
-            "hey megaform, write this",
-            "hey megafone, write this",
-            "hey mecca phone, write this",
-            "hey mecha phone, write this",
-            "hey megha phone, write this",
-            "hey meg a phone, write this",
-            "hey make phone, write this",
-            "hey made phone, write this",
-            "hey make the phone, write this",
-            "hey made the phone, write this",
-            "hey make a foam, write this",
-            "hey made a form, write this",
-            "hey make up phone, write this"
+            "hey zara thustra, write this",
+            "hey sarah thustra, write this",
+            "hey zara thuster, write this",
+            "hey zoroaster, write this",
+            "he zarathustra, write this",
+            "hay zara thustra, write this",
+            "hi sarah thustra, write this"
         ]
         for transcript in alwaysOn {
             expectEqual(
                 WakePhraseMatcher.detect(in: transcript),
-                WakePhraseMatch(phrase: .heyMegaphone, trailingText: "write this"),
+                WakePhraseMatch(phrase: .heyZarathustra, trailingText: "write this"),
                 "Did not normalize \(transcript.debugDescription)"
             )
         }
 
-        for transcript in ["mega phone, write this", "mega—phone, write this"] {
+        for transcript in ["zara thustra, write this", "zara—thustra, write this"] {
             expectEqual(
                 WakePhraseMatcher.detect(in: transcript),
-                WakePhraseMatch(phrase: .heyMegaphone, trailingText: "write this")
+                WakePhraseMatch(phrase: .heyZarathustra, trailingText: "write this")
             )
         }
 
-        for transcript in ["make a phone call", "made a phone call", "mega foam, write this"] {
+        for transcript in ["Sarah wrote this", "Zara, write this", "zoroaster, write this"] {
             expectEqual(
-                WakePhraseMatcher.detect(in: transcript, plainMegaphoneEnabled: true),
+                WakePhraseMatcher.detect(in: transcript, plainZarathustraEnabled: true),
                 nil,
                 "Fuzzy alias escaped the Hey-only guard for \(transcript.debugDescription)"
             )
@@ -86,11 +72,11 @@ enum WakePhraseMatcherTests {
     }
 
     private static func testHiddenRecognitionHints() {
-        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Megaphone"), true, "Canonical wake hint missing")
-        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Mega Phone"), true, "Segmented wake hint missing")
-        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Make a Phone"), true, "Acoustic wake hint missing")
+        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Zarathustra"), true, "Canonical wake hint missing")
+        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Zara Thustra"), true, "Segmented wake hint missing")
+        expectEqual(WakePhraseMatcher.recognitionHints.contains("Hey Sarah Thustra"), true, "Acoustic wake hint missing")
         expectEqual(
-            WakePhraseMatcher.recognitionHints.allSatisfy { $0.lowercased().hasPrefix("hey") || $0 == "Megaphone" },
+            WakePhraseMatcher.recognitionHints.allSatisfy { $0.lowercased().hasPrefix("hey") || $0 == "Zarathustra" },
             true,
             "Unsafe plain acoustic alias leaked into recognition hints"
         )
@@ -98,14 +84,14 @@ enum WakePhraseMatcherTests {
 
     private static func testPhraseBoundariesAndPosition() {
         let rejected = [
-            "megaphones",
-            "hey megaphones",
-            "The megaphone is loud",
-            "They said hey megaphone"
+            "zarathustras",
+            "hey zarathustras",
+            "The zarathustra is loud",
+            "They said hey zarathustra"
         ]
         for transcript in rejected {
             expectEqual(
-                WakePhraseMatcher.detect(in: transcript, plainMegaphoneEnabled: true),
+                WakePhraseMatcher.detect(in: transcript, plainZarathustraEnabled: true),
                 nil,
                 "False positive for \(transcript.debugDescription)"
             )
@@ -114,43 +100,43 @@ enum WakePhraseMatcherTests {
 
     private static func testTrailingDictation() {
         expectEqual(
-            WakePhraseMatcher.detect(in: "Hey Megaphone, what's 2 + 3?"),
-            WakePhraseMatch(phrase: .heyMegaphone, trailingText: "what's 2 + 3?")
+            WakePhraseMatcher.detect(in: "Hey Zarathustra, what's 2 + 3?"),
+            WakePhraseMatch(phrase: .heyZarathustra, trailingText: "what's 2 + 3?")
         )
         expectEqual(
-            WakePhraseMatcher.detect(in: "Hey Megaphone, write this down."),
-            WakePhraseMatch(phrase: .heyMegaphone, trailingText: "write this down.")
+            WakePhraseMatcher.detect(in: "Hey Zarathustra, write this down."),
+            WakePhraseMatch(phrase: .heyZarathustra, trailingText: "write this down.")
         )
         expectEqual(
-            WakePhraseMatcher.detect(in: "Megaphone — new paragraph", plainMegaphoneEnabled: true),
-            WakePhraseMatch(phrase: .megaphone, trailingText: "new paragraph")
+            WakePhraseMatcher.detect(in: "Zarathustra — new paragraph", plainZarathustraEnabled: true),
+            WakePhraseMatch(phrase: .zarathustra, trailingText: "new paragraph")
         )
     }
 
     private static func testPartialResultSuppression() {
         let start = Date(timeIntervalSince1970: 100)
         var matcher = WakePhraseMatcher(cooldown: 1)
-        expectEqual(matcher.observe("hey megaphone", at: start)?.phrase, .heyMegaphone)
-        expectEqual(matcher.observe("hey megaphone write", at: start.addingTimeInterval(0.2)), nil)
-        expectEqual(matcher.observe("hey megaphone write this", at: start.addingTimeInterval(2)), nil)
+        expectEqual(matcher.observe("hey zarathustra", at: start)?.phrase, .heyZarathustra)
+        expectEqual(matcher.observe("hey zarathustra write", at: start.addingTimeInterval(0.2)), nil)
+        expectEqual(matcher.observe("hey zarathustra write this", at: start.addingTimeInterval(2)), nil)
     }
 
     private static func testCooldownAndRearming() {
         let start = Date(timeIntervalSince1970: 200)
         var matcher = WakePhraseMatcher(cooldown: 1)
-        expectEqual(matcher.observe("hey megaphone", at: start)?.phrase, .heyMegaphone)
+        expectEqual(matcher.observe("hey zarathustra", at: start)?.phrase, .heyZarathustra)
         expectEqual(matcher.observe("", at: start.addingTimeInterval(0.5)), nil)
-        expectEqual(matcher.observe("hey megaphone", at: start.addingTimeInterval(0.6)), nil)
+        expectEqual(matcher.observe("hey zarathustra", at: start.addingTimeInterval(0.6)), nil)
         expectEqual(matcher.observe("", at: start.addingTimeInterval(1.1)), nil)
-        expectEqual(matcher.observe("hey megaphone", at: start.addingTimeInterval(1.2))?.phrase, .heyMegaphone)
+        expectEqual(matcher.observe("hey zarathustra", at: start.addingTimeInterval(1.2))?.phrase, .heyZarathustra)
     }
 
     private static func testExplicitRearm() {
         let start = Date(timeIntervalSince1970: 300)
         var matcher = WakePhraseMatcher(cooldown: 30)
-        _ = matcher.observe("hey megaphone", at: start)
+        _ = matcher.observe("hey zarathustra", at: start)
         matcher.rearm()
-        expectEqual(matcher.observe("hey megaphone", at: start)?.phrase, .heyMegaphone)
+        expectEqual(matcher.observe("hey zarathustra", at: start)?.phrase, .heyZarathustra)
     }
 
     private static func expectEqual<T: Equatable>(

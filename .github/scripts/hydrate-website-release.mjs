@@ -4,12 +4,12 @@ import { join } from "node:path";
 const siteDirectory = process.argv[2];
 if (!siteDirectory) throw new Error("Usage: hydrate-website-release.mjs <site-directory>");
 
-const response = await fetch("https://api.github.com/repos/Kuberwastaken/megaphone/releases?per_page=20", {
+const response = await fetch("https://api.github.com/repos/qoodeng/zarathustra/releases?per_page=20", {
   headers: {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "megaphone-pages-deploy"
+    "User-Agent": "zarathustra-pages-deploy"
   }
 });
 if (!response.ok) throw new Error(`GitHub release lookup failed: ${response.status} ${response.statusText}`);
@@ -23,9 +23,9 @@ const isStableSemver = release =>
   /^v?\d+\.\d+\.\d+$/.test(String(release.tag_name || ""));
 const stableReleases = releases.filter(isStableSemver);
 const release = stableReleases[0];
-if (!release) throw new Error("No stable semantic Megaphone release was found");
+if (!release) throw new Error("No stable semantic Zarathustra release was found");
 const version = String(release.tag_name || "").replace(/^v/i, "");
-const dmg = release.assets?.find(asset => asset.name === "Megaphone.dmg");
+const dmg = release.assets?.find(asset => asset.name === "Zarathustra.dmg");
 if (!version || !release.published_at || !release.html_url || !dmg?.browser_download_url) {
   throw new Error("Latest GitHub release is missing required website metadata");
 }
@@ -45,7 +45,7 @@ const firstBullet = String(release.body || "")
   .replace(/\[([^\]]+)]\([^\)]+\)/g, "$1")
   .replace(/\s*\(#\d+\)\s*$/, "")
   .trim();
-const fallbackHighlight = `Megaphone ${version} is now available.`;
+const fallbackHighlight = `Zarathustra ${version} is now available.`;
 const rawHighlight = firstBullet || fallbackHighlight;
 const highlight = rawHighlight.length > 210
   ? `${rawHighlight.slice(0, 207).replace(/\s+\S*$/, "")}…`
@@ -61,13 +61,13 @@ const releaseDate = new Intl.DateTimeFormat("en-US", {
 }).format(new Date(release.published_at));
 
 const replacements = new Map([
-  ["__MEGAPHONE_VERSION__", version],
-  ["__MEGAPHONE_RELEASE_DATE__", releaseDate],
-  ["__MEGAPHONE_RELEASE_DATE_ISO__", release.published_at],
-  ["__MEGAPHONE_RELEASE_HIGHLIGHT__", highlight],
-  ["__MEGAPHONE_RELEASE_SUMMARY__", summary],
-  ["__MEGAPHONE_RELEASE_URL__", release.html_url],
-  ["__MEGAPHONE_DMG_URL__", dmg.browser_download_url]
+  ["__ZARATHUSTRA_VERSION__", version],
+  ["__ZARATHUSTRA_RELEASE_DATE__", releaseDate],
+  ["__ZARATHUSTRA_RELEASE_DATE_ISO__", release.published_at],
+  ["__ZARATHUSTRA_RELEASE_HIGHLIGHT__", highlight],
+  ["__ZARATHUSTRA_RELEASE_SUMMARY__", summary],
+  ["__ZARATHUSTRA_RELEASE_URL__", release.html_url],
+  ["__ZARATHUSTRA_DMG_URL__", dmg.browser_download_url]
 ]);
 
 for (const fileName of ["index.html", "llms.txt"]) {
@@ -76,7 +76,7 @@ for (const fileName of ["index.html", "llms.txt"]) {
   for (const [token, value] of replacements) {
     contents = contents.replaceAll(token, escapeHTML(value));
   }
-  const unresolved = contents.match(/__MEGAPHONE_[A-Z_]+__/g);
+  const unresolved = contents.match(/__ZARATHUSTRA_[A-Z_]+__/g);
   if (unresolved) throw new Error(`Unresolved release metadata in ${fileName}: ${unresolved.join(", ")}`);
   await writeFile(path, contents);
 }
@@ -91,7 +91,7 @@ const updateManifest = {
     html_url: item.html_url,
     published_at: item.published_at,
     assets: (item.assets || [])
-      .filter(asset => asset.name === "Megaphone.dmg")
+      .filter(asset => asset.name === "Zarathustra.dmg")
       .map(asset => ({
         name: asset.name,
         browser_download_url: asset.browser_download_url,
@@ -104,4 +104,4 @@ await writeFile(
   `${JSON.stringify(updateManifest, null, 2)}\n`
 );
 
-console.log(`Hydrated website with Megaphone ${version}, published ${releaseDate}`);
+console.log(`Hydrated website with Zarathustra ${version}, published ${releaseDate}`);

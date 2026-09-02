@@ -3,7 +3,7 @@ import Foundation
 import Speech
 import os.log
 
-private let speechLog = OSLog(subsystem: "com.kuberwastaken.megaphone", category: "SpeechAnalyzer")
+private let speechLog = OSLog(subsystem: "com.qoodeng.zarathustra", category: "SpeechAnalyzer")
 
 // MARK: - Errors
 
@@ -15,6 +15,7 @@ enum SpeechAnalyzerServiceError: Error, LocalizedError {
     case noAudioSamples
     case resultStreamTimedOut
     case sessionNotStarted
+    case streamingBufferLimitExceeded
 
     var errorDescription: String? {
         switch self {
@@ -32,13 +33,15 @@ enum SpeechAnalyzerServiceError: Error, LocalizedError {
             return "On-device transcription did not finish returning results."
         case .sessionNotStarted:
             return "The on-device transcription session was never started."
+        case .streamingBufferLimitExceeded:
+            return "Live transcription could not keep up; retrying from the recorded audio file."
         }
     }
 }
 
 // MARK: - Locale resolution
 
-/// Maps Megaphone's stored language preference onto a locale supported by
+/// Maps Zarathustra's stored language preference onto a locale supported by
 /// `SpeechTranscriber`. Handles the legacy values written by earlier
 /// versions ("auto", bare ISO codes like "en"/"hi", and the "hinglish"/
 /// "gujlish" pseudo-codes) as well as full BCP-47 identifiers.
@@ -110,7 +113,7 @@ enum SpeechLocaleResolver {
 // MARK: - Core service
 
 enum SpeechAnalyzerService {
-    /// Splits Megaphone's free-form vocabulary text into individual terms and
+    /// Splits Zarathustra's free-form vocabulary text into individual terms and
     /// wraps them in an `AnalysisContext` so the on-device model is biased
     /// toward the user's names and jargon.
     static func vocabularyContext(from rawVocabulary: String) -> AnalysisContext? {
@@ -148,7 +151,7 @@ enum SpeechAnalyzerService {
 
         let reserved = await AssetInventory.reservedLocales
         if !reserved.contains(where: { $0.identifier(.bcp47) == target }) {
-            // Megaphone only ever needs one locale; free the slots held for
+            // Zarathustra only ever needs one locale; free the slots held for
             // previously used languages so the app's small reservation quota
             // can't fill up after a few language switches.
             for staleLocale in reserved {
@@ -276,12 +279,21 @@ enum SpeechAnalyzerService {
 /// session failed to start, `commitAndAwaitFinal()` throws and the caller
 /// falls back to file-based transcription.
 final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
+    /// At 24 kHz, mono Int16 this is ten seconds of pre-setup audio. If model
+    /// setup takes longer, the caller falls back to the complete WAV instead
+    /// of allowing process memory to grow for the full recording.
+    static let maxPendingPCMBytes = 24_000 * MemoryLayout<Int16>.size * 10
+    private static let inputBufferCapacity = 256
+
     private let localePreference: String
     private let vocabulary: String
 
     /// Serializes all mutable state below and orders sample delivery.
-    private let queue = DispatchQueue(label: "com.kuberwastaken.megaphone.speechanalyzer-input")
+    private let queue = DispatchQueue(label: "com.qoodeng.zarathustra.speechanalyzer-input")
     private var pendingSamples: [Data] = []
+    private var pendingSampleBytes = 0
+    private var bufferLimitExceeded = false
+    private var streamInputDropped = false
     private var finished = false
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
@@ -298,6 +310,11 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
         channels: 1,
         interleaved: true
     )
+
+    static func canBufferPendingPCM(currentBytes: Int, incomingBytes: Int) -> Bool {
+        guard currentBytes >= 0, incomingBytes >= 0 else { return false }
+        return currentBytes <= maxPendingPCMBytes - min(incomingBytes, maxPendingPCMBytes + 1)
+    }
 
     init(localePreference: String, vocabulary: String) {
         self.localePreference = localePreference
@@ -330,7 +347,9 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
                 throw SpeechAnalyzerServiceError.noCompatibleAudioFormat
             }
 
-            let (inputSequence, builder) = AsyncStream<AnalyzerInput>.makeStream()
+            let (inputSequence, builder) = AsyncStream<AnalyzerInput>.makeStream(
+                bufferingPolicy: .bufferingOldest(Self.inputBufferCapacity)
+            )
             let collector = Task<String, Error> {
                 var transcript = AttributedString("")
                 for try await result in transcriber.results {
@@ -342,7 +361,7 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
 
             queue.sync {
                 self.resultsTask = collector
-                if self.finished {
+                if self.finished || self.bufferLimitExceeded {
                     // Cancelled while setting up: shut the analyzer back down.
                     builder.finish()
                     collector.cancel()
@@ -354,6 +373,7 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
                 self.analyzerFormat = format
                 let backlog = self.pendingSamples
                 self.pendingSamples.removeAll()
+                self.pendingSampleBytes = 0
                 for data in backlog {
                     self.convertAndYieldLocked(data)
                 }
@@ -371,7 +391,19 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
             if inputBuilder != nil {
                 convertAndYieldLocked(data)
             } else {
+                guard !bufferLimitExceeded else { return }
+                guard Self.canBufferPendingPCM(
+                    currentBytes: pendingSampleBytes,
+                    incomingBytes: data.count
+                ) else {
+                    bufferLimitExceeded = true
+                    pendingSamples.removeAll()
+                    pendingSampleBytes = 0
+                    os_log(.error, log: speechLog, "streaming setup buffer exceeded; file fallback required")
+                    return
+                }
                 pendingSamples.append(data)
+                pendingSampleBytes += data.count
             }
         }
     }
@@ -386,12 +418,21 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
 
         var analyzer: SpeechAnalyzer?
         var resultsTask: Task<String, Error>?
+        var streamingFailed = false
         queue.sync {
             finished = true
             inputBuilder?.finish()
             inputBuilder = nil
             analyzer = self.analyzer
             resultsTask = self.resultsTask
+            streamingFailed = bufferLimitExceeded || streamInputDropped
+        }
+        if streamingFailed {
+            resultsTask?.cancel()
+            if let analyzer {
+                await analyzer.cancelAndFinishNow()
+            }
+            throw SpeechAnalyzerServiceError.streamingBufferLimitExceeded
         }
         guard let analyzer, let resultsTask else {
             throw SpeechAnalyzerServiceError.sessionNotStarted
@@ -413,6 +454,7 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
         queue.async { [self] in
             finished = true
             pendingSamples.removeAll()
+            pendingSampleBytes = 0
             inputBuilder?.finish()
             inputBuilder = nil
             resultsTask?.cancel()
@@ -470,7 +512,15 @@ final class SpeechAnalyzerStreamingSession: @unchecked Sendable {
             return
         }
         if converted.frameLength > 0 {
-            inputBuilder.yield(AnalyzerInput(buffer: converted))
+            switch inputBuilder.yield(AnalyzerInput(buffer: converted)) {
+            case .enqueued:
+                break
+            case .dropped, .terminated:
+                streamInputDropped = true
+                os_log(.error, log: speechLog, "streaming input buffer dropped audio; file fallback required")
+            @unknown default:
+                streamInputDropped = true
+            }
         }
     }
 }

@@ -70,6 +70,13 @@ final class ScreenTextService {
         visits += 1
 
         let role = string(of: element, attribute: kAXRoleAttribute as CFString) ?? ""
+        let subrole = string(of: element, attribute: kAXSubroleAttribute as CFString) ?? ""
+        let secureMarker = NSAccessibility.Subrole.secureTextField.rawValue
+        guard role != secureMarker, subrole != secureMarker else {
+            // Skip the entire subtree: some web views place an AXStaticText
+            // child containing the field value beneath the secure element.
+            return
+        }
         if ["AXStaticText", "AXTextArea", "AXTextField", "AXHeading"].contains(role) {
             let value = string(of: element, attribute: kAXValueAttribute as CFString)
                 ?? string(of: element, attribute: kAXTitleAttribute as CFString)
@@ -176,7 +183,8 @@ final class ScreenTextService {
     static func truncatedMiddle(_ text: String, to limit: Int) -> String {
         guard text.count > limit else { return text }
         let headCount = limit * 2 / 5
-        let tailCount = limit - headCount - 4
-        return "\(text.prefix(headCount))\n[…]\n\(text.suffix(tailCount))"
+        let separator = "\n[…]\n"
+        let tailCount = max(limit - headCount - separator.count, 0)
+        return "\(text.prefix(headCount))\(separator)\(text.suffix(tailCount))"
     }
 }

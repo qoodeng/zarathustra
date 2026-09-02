@@ -1,12 +1,12 @@
-# Megaphone
+# Zarathustra
 
-> Megaphone is a free, open-source, native macOS dictation app powered entirely by Apple's on-device SpeechAnalyzer and Foundation Models frameworks.
+> Zarathustra is a free, open-source, native macOS dictation app powered entirely by Apple's on-device SpeechAnalyzer and Foundation Models frameworks.
 
-Website: https://megaphone.kuber.studio/
-Latest release: Megaphone __MEGAPHONE_VERSION__ (__MEGAPHONE_RELEASE_DATE__)
-Latest shipped change: __MEGAPHONE_RELEASE_HIGHLIGHT__
-Source: https://github.com/Kuberwastaken/megaphone
-Download: https://github.com/Kuberwastaken/megaphone/releases/latest/download/Megaphone.dmg
+Website: https://qoodeng.github.io/zarathustra/
+Latest release: Zarathustra __ZARATHUSTRA_VERSION__ (__ZARATHUSTRA_RELEASE_DATE__)
+Latest shipped change: __ZARATHUSTRA_RELEASE_HIGHLIGHT__
+Source: https://github.com/qoodeng/zarathustra
+Download: https://github.com/qoodeng/zarathustra/releases/latest/download/Zarathustra.dmg
 License: MIT
 Requires: macOS 26 Tahoe on Apple silicon
 
@@ -14,14 +14,14 @@ Requires: macOS 26 Tahoe on Apple silicon
 
 - Streams microphone audio into Apple's SpeechAnalyzer while the user talks, so transcription is nearly complete when the shortcut is released.
 - Runs Smart Cleanup with Apple's on-device Foundation Models framework and falls back to a fast deterministic pass for fillers, stutters, repetitions, and spacing.
-- Offers Inline AI (Alpha): begin a dictation with “Hey Megaphone” to ask a question, generate text, or transform the previous dictation using same-app screen context.
+- Offers Inline AI (Alpha): begin a dictation with “Hey Zarathustra” to ask a question, generate text, or transform the previous dictation using same-app screen context.
 - Learns a private personal Dictionary of names, technical terms, acronyms, and exact heard-to-written corrections.
 - Uses active-app and window context to preserve technical syntax and adapt output to where the user is typing.
 - Supports hold-to-talk, tap-to-toggle, Edit Mode, voice macros, multiple languages, configurable microphones, clipboard restoration, and a run log.
 
 ## Privacy
 
-Speech recognition, cleanup, Dictionary learning, and Inline AI run on the Mac. Megaphone does not require an API key and does not upload voice recordings or transcripts to a Megaphone server.
+Speech recognition, cleanup, Dictionary learning, and Inline AI run on the Mac. Zarathustra does not require an API key and does not upload voice recordings or transcripts to a Zarathustra server.
 
 ## Key shortcut
 

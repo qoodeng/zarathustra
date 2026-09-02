@@ -40,7 +40,7 @@ struct TestCaseExporter {
         let timestamp = isoTimestamp(from: item.timestamp)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType.zip]
-        panel.nameFieldStringValue = "megaphone-case-\(timestamp).zip"
+        panel.nameFieldStringValue = "zarathustra-case-\(timestamp).zip"
         panel.title = "Export Test Case"
         panel.message = "Choose where to save the test case ZIP."
         panel.begin { response in
@@ -75,7 +75,7 @@ struct TestCaseExporter {
     ) throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory
-            .appendingPathComponent("megaphone-case-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("zarathustra-case-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: tempDir) }
 
         do {

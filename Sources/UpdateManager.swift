@@ -108,16 +108,6 @@ struct GitHubReleaseAsset: Decodable {
     }
 }
 
-private struct UpdateManifest: Decodable {
-    let schemaVersion: Int
-    let releases: [GitHubRelease]
-
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version"
-        case releases
-    }
-}
-
 private enum ReleaseLookupError: LocalizedError {
     case invalidResponse
     case httpStatus(Int, rateLimitReset: String?)
@@ -200,13 +190,14 @@ final class UpdateManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "updateLastPostTranscriptionReminderDate") }
     }
 
-    private let updateManifestURL = URL(string: "https://megaphone.kuber.studio/updates.json")!
-    private let releasesURL = URL(string: "https://api.github.com/repos/Kuberwastaken/megaphone/releases?per_page=100")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/qoodeng/zarathustra/releases?per_page=100")!
     private let stabilityBufferDays: TimeInterval = 3
     private let checkIntervalSeconds: TimeInterval = 7 * 24 * 60 * 60 // 7 days
     private let postTranscriptionReminderInterval: TimeInterval = 24 * 60 * 60 // 1 day
     private var periodicTimer: Timer?
     private var activeDownloadTask: Task<Void, Never>?
+    private var activeTransferTask: Task<Int, Error>?
+    private var activeTransferID: UUID?
 
     private init() {
         lastCheckDate = UserDefaults.standard.object(forKey: "updateLastCheckDate") as? Date
@@ -250,7 +241,7 @@ final class UpdateManager: ObservableObject {
 
     @MainActor
     func checkForUpdates(userInitiated: Bool) async {
-        let currentBuildTag = Bundle.main.infoDictionary?["MegaphoneBuildTag"] as? String
+        let currentBuildTag = Bundle.main.infoDictionary?["ZarathustraBuildTag"] as? String
         let currentVersionString = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
         // Dev builds (no embedded tag): skip auto-checks, but allow manual checks
@@ -340,25 +331,7 @@ final class UpdateManager: ObservableObject {
     }
 
     private func fetchReleases() async throws -> [GitHubRelease] {
-        do {
-            var request = URLRequest(url: updateManifestURL)
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw ReleaseLookupError.invalidResponse
-            }
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw ReleaseLookupError.httpStatus(httpResponse.statusCode, rateLimitReset: nil)
-            }
-            let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)
-            guard manifest.schemaVersion == 1, !manifest.releases.isEmpty else {
-                throw ReleaseLookupError.invalidManifest
-            }
-            return manifest.releases
-        } catch {
-            return try await fetchReleasesFromGitHub()
-        }
+        try await fetchReleasesFromGitHub()
     }
 
     private func fetchReleasesFromGitHub() async throws -> [GitHubRelease] {
@@ -367,7 +340,7 @@ final class UpdateManager: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-        request.setValue("Megaphone/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Zarathustra/\(appVersion)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -758,7 +731,10 @@ final class UpdateManager: ObservableObject {
 
     func cancelDownload() {
         activeDownloadTask?.cancel()
+        activeTransferTask?.cancel()
         activeDownloadTask = nil
+        activeTransferTask = nil
+        activeTransferID = nil
         downloadProgress = nil
         updateStatus = .idle
     }
@@ -785,7 +761,7 @@ final class UpdateManager: ObservableObject {
 
     private func performUpdate(downloadURL: URL, expectedSize: Int, expectedVersion: String) async {
         let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent("megaphone-update-\(UUID().uuidString)")
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("zarathustra-update-\(UUID().uuidString)")
 
         do {
             try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -794,7 +770,7 @@ final class UpdateManager: ObservableObject {
             return
         }
 
-        let dmgPath = tempDir.appendingPathComponent("Megaphone.dmg")
+        let dmgPath = tempDir.appendingPathComponent("Zarathustra.dmg")
 
         // MARK: Download phase
         updateStatus = .downloading
@@ -822,6 +798,7 @@ final class UpdateManager: ObservableObject {
 
             // Run the byte-iteration and file I/O off the main thread
             let mgr = self
+            let transferID = UUID()
             let downloadTask = Task.detached {
                 defer { try? outputHandle.close() }
                 var receivedBytes = 0
@@ -857,8 +834,21 @@ final class UpdateManager: ObservableObject {
                 }
                 return receivedBytes
             }
+            activeTransferTask = downloadTask
+            activeTransferID = transferID
+            defer {
+                if activeTransferID == transferID {
+                    activeTransferTask = nil
+                    activeTransferID = nil
+                }
+            }
 
-            let receivedBytes = try await downloadTask.value
+            let receivedBytes = try await withTaskCancellationHandler {
+                try await downloadTask.value
+            } onCancel: {
+                downloadTask.cancel()
+            }
+            try Task.checkCancellation()
             if expectedSize > 0 && receivedBytes != expectedSize {
                 throw NSError(domain: "UpdateManager", code: 4, userInfo: [
                     NSLocalizedDescriptionKey: "Downloaded update size did not match the release asset"
@@ -879,6 +869,11 @@ final class UpdateManager: ObservableObject {
             return
         }
 
+        guard !Task.isCancelled else {
+            try? fm.removeItem(at: tempDir)
+            return
+        }
+
         // MARK: Install phase - mount DMG, extract app
         updateStatus = .installing
         downloadProgress = nil
@@ -887,6 +882,7 @@ final class UpdateManager: ObservableObject {
             let mountPoint = try await Task.detached {
                 try self.mountDMG(at: dmgPath)
             }.value
+            try Task.checkCancellation()
 
             defer {
                 // Always try to detach
@@ -907,7 +903,7 @@ final class UpdateManager: ObservableObject {
             }
 
             // Copy app to staging directory
-            let stagingDir = fm.temporaryDirectory.appendingPathComponent("megaphone-staged-\(UUID().uuidString)")
+            let stagingDir = fm.temporaryDirectory.appendingPathComponent("zarathustra-staged-\(UUID().uuidString)")
             try fm.createDirectory(at: stagingDir, withIntermediateDirectories: true)
             do {
                 let stagedApp = stagingDir.appendingPathComponent(appBundle.lastPathComponent)
@@ -917,9 +913,11 @@ final class UpdateManager: ObservableObject {
                     try self.validateStagedApp(
                         stagedApp,
                         currentApp: Bundle.main.bundleURL,
+                        expectedBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.qoodeng.zarathustra",
                         expectedVersion: expectedVersion
                     )
                 }.value
+                try Task.checkCancellation()
 
                 // Clean up DMG (detach happens in defer above, delete temp dir)
                 try? fm.removeItem(at: tempDir)
@@ -987,10 +985,11 @@ final class UpdateManager: ObservableObject {
     nonisolated private func validateStagedApp(
         _ stagedApp: URL,
         currentApp: URL,
+        expectedBundleIdentifier: String,
         expectedVersion: String
     ) throws {
         guard let info = NSDictionary(contentsOf: stagedApp.appendingPathComponent("Contents/Info.plist")),
-              info["CFBundleIdentifier"] as? String == "com.kuberwastaken.megaphone",
+              info["CFBundleIdentifier"] as? String == expectedBundleIdentifier,
               info["CFBundleShortVersionString"] as? String == expectedVersion else {
             throw NSError(domain: "UpdateManager", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "The downloaded app has an unexpected identity or version"
@@ -1044,7 +1043,7 @@ final class UpdateManager: ObservableObject {
                 NSLocalizedDescriptionKey: "Could not verify the app publisher"
             ])
         }
-        return requirement
+        return String(requirement.dropFirst("designated => ".count))
     }
 
     private func replaceAndRelaunch(
@@ -1054,14 +1053,16 @@ final class UpdateManager: ObservableObject {
     ) throws {
         let currentAppPath = Bundle.main.bundlePath
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let expectedBundleIdentifier = Bundle.main.bundleIdentifier ?? "com.qoodeng.zarathustra"
+        let expectedRequirement = try designatedRequirement(of: Bundle.main.bundleURL)
         let pid = String(ProcessInfo.processInfo.processIdentifier)
-        let backupPath = stagingDir.appendingPathComponent("Megaphone Backup.app").path
+        let backupPath = stagingDir.appendingPathComponent("Zarathustra Backup.app").path
         let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Megaphone", isDirectory: true)
+            .appendingPathComponent("Library/Logs/Zarathustra", isDirectory: true)
         try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
         let logPath = logsDirectory.appendingPathComponent("updater.log").path
 
-        // Keep the /Applications/Megaphone.app directory itself in place.
+        // Keep the /Applications/Zarathustra.app directory itself in place.
         // macOS App Management may reject renaming/removing that directory,
         // while allowing an updater to replace its children in place.
         let script = """
@@ -1072,12 +1073,17 @@ final class UpdateManager: ObservableObject {
             sleep 0.2
         done
         kill -0 "$1" 2>/dev/null && { echo "timed out waiting for app to quit"; exit 1; }
+        /usr/bin/codesign --verify --deep --strict -R="$9" "$3" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$3/Contents/Info.plist")" = "$10" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$3/Contents/Info.plist")" = "$6" \
+            || { echo "staged app changed after validation; refusing update"; exit 1; }
         /usr/bin/ditto "$2" "$5" \
-            && /usr/bin/codesign --verify --deep --strict "$5" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$5" \
             || { echo "backup failed; leaving staged files at $4"; exit 1; }
         if /usr/bin/find "$2" -mindepth 1 -delete \
             && /usr/bin/ditto "$3" "$2" \
-            && /usr/bin/codesign --verify --deep --strict "$2" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$2" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$2/Contents/Info.plist")" = "$10" \
             && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$2/Contents/Info.plist")" = "$6"; then
             echo "install verified; relaunching $6"
             if /usr/bin/open "$2"; then
@@ -1090,7 +1096,8 @@ final class UpdateManager: ObservableObject {
         fi
         if /usr/bin/find "$2" -mindepth 1 -delete \
             && /usr/bin/ditto "$5" "$2" \
-            && /usr/bin/codesign --verify --deep --strict "$2" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$2" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$2/Contents/Info.plist")" = "$10" \
             && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$2/Contents/Info.plist")" = "$8" \
             && /usr/bin/open "$2"; then
             echo "rollback verified; relaunched $8"
@@ -1110,7 +1117,9 @@ final class UpdateManager: ObservableObject {
                              backupPath,          // $5
                              expectedVersion,     // $6
                              logPath,             // $7
-                             currentVersion]      // $8
+                             currentVersion,      // $8
+                             expectedRequirement, // $9
+                             expectedBundleIdentifier] // $10
         try process.run()
 
         // Quit only after the durable helper successfully launches.

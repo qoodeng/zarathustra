@@ -1,4 +1,4 @@
-# Megaphone intro animation
+# Zarathustra intro animation
 
 A 1176×764 source recording for the README demo across Claude Code, Codex,
 Cursor CLI, and Google Docs. The checked-in MP4 is used directly; Remotion is

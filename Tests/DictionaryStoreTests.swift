@@ -25,12 +25,12 @@ enum DictionaryStoreTests {
         let (store, defaults) = makeStore()
         defer { clear(defaults) }
 
-        let first = try! store.addManual("  Megaphone  ")
+        let first = try! store.addManual("  Zarathustra  ")
         _ = try! store.addManual("SpeechAnalyzer")
-        expectEqual(store.activeTerms, ["Megaphone", "SpeechAnalyzer"])
+        expectEqual(store.activeTerms, ["SpeechAnalyzer", "Zarathustra"])
         store.setEnabled(false, for: first.id)
         expectEqual(store.activeTermsText, "SpeechAnalyzer")
-        expectThrows(.duplicateTerm) { try store.addManual("megaphone") }
+        expectThrows(.duplicateTerm) { try store.addManual("zarathustra") }
         expectThrows(.emptyTerm) { try store.addManual("   ") }
     }
 
@@ -79,14 +79,14 @@ enum DictionaryStoreTests {
     private static func testLegacyMigrationRunsOnce() {
         let suite = "DictionaryStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        defaults.set("Megaphone\nSpeechAnalyzer, Kuber; Foundation Models", forKey: "legacy")
+        defaults.set("Zarathustra\nSpeechAnalyzer, Kuber; Foundation Models", forKey: "legacy")
         let store = DictionaryStore(
             defaults: defaults,
             storageKey: "entries",
             migrationKey: "migrated",
             legacyVocabularyKey: "legacy"
         )
-        expectEqual(Set(store.activeTerms), Set(["Megaphone", "SpeechAnalyzer", "Kuber", "Foundation Models"]))
+        expectEqual(Set(store.activeTerms), Set(["Zarathustra", "SpeechAnalyzer", "Kuber", "Foundation Models"]))
 
         defaults.set("A later legacy edit", forKey: "legacy")
         let reloaded = DictionaryStore(
@@ -95,7 +95,7 @@ enum DictionaryStoreTests {
             migrationKey: "migrated",
             legacyVocabularyKey: "legacy"
         )
-        expectEqual(Set(reloaded.activeTerms), Set(["Megaphone", "SpeechAnalyzer", "Kuber", "Foundation Models"]))
+        expectEqual(Set(reloaded.activeTerms), Set(["Zarathustra", "SpeechAnalyzer", "Kuber", "Foundation Models"]))
         defaults.removePersistentDomain(forName: suite)
     }
 
@@ -140,7 +140,7 @@ enum DictionaryStoreTests {
         let defaults = UserDefaults(suiteName: suite)!
         // A stored blob from before `starred`/`usageCount` existed.
         let legacyBlob = """
-        [{"id":"1B8F4E2A-6C1D-4E5B-9A3F-2D7C8E0B4A61","term":"Megaphone","source":"manual",\
+        [{"id":"1B8F4E2A-6C1D-4E5B-9A3F-2D7C8E0B4A61","term":"Zarathustra","source":"manual",\
         "status":"active","isEnabled":true,"observationCount":0,"createdAt":776000000,"updatedAt":776000000}]
         """
         defaults.set(Data(legacyBlob.utf8), forKey: "entries")
@@ -152,10 +152,10 @@ enum DictionaryStoreTests {
             legacyVocabularyKey: "legacy"
         )
         expectEqual(store.entries.count, 1)
-        expectEqual(store.entries.first?.term, "Megaphone")
+        expectEqual(store.entries.first?.term, "Zarathustra")
         expectEqual(store.entries.first?.starred, false)
         expectEqual(store.entries.first?.usageCount, 0)
-        expectEqual(store.activeTerms, ["Megaphone"])
+        expectEqual(store.activeTerms, ["Zarathustra"])
         defaults.removePersistentDomain(forName: suite)
     }
 
@@ -209,9 +209,9 @@ enum DictionaryStoreTests {
         let suite = "DictionaryStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         let store = DictionaryStore(defaults: defaults, storageKey: "entries", migrationKey: "migrated")
-        let entry = try! store.addManual("Megaphone")
+        let entry = try! store.addManual("Zarathustra")
         store.setStarred(true, for: entry.id)
-        store.recordUsage(in: "Megaphone shipped")
+        store.recordUsage(in: "Zarathustra shipped")
         let reloaded = DictionaryStore(defaults: defaults, storageKey: "entries", migrationKey: "migrated")
         expectEqual(reloaded.entries.first?.starred, true)
         expectEqual(reloaded.entries.first?.usageCount, 1)
@@ -222,15 +222,15 @@ enum DictionaryStoreTests {
         let (store, defaults) = makeStore()
         defer { clear(defaults) }
 
-        let starred = try! store.addManual("Megaphone")
+        let starred = try! store.addManual("Zarathustra")
         store.setStarred(true, for: starred.id)
         store.observe(candidateTerms: ["Kuber"])
 
-        let document = store.exportDocument(exactCorrections: "mega phone → Megaphone")
+        let document = store.exportDocument(exactCorrections: "mega phone → Zarathustra")
         let decoded = try! DictionaryExportDocument.decode(try! document.encoded())
 
-        expectEqual(decoded.megaphoneDictionaryVersion, DictionaryExportDocument.currentVersion)
-        expectEqual(decoded.exactCorrections, "mega phone → Megaphone")
+        expectEqual(decoded.zarathustraDictionaryVersion, DictionaryExportDocument.currentVersion)
+        expectEqual(decoded.exactCorrections, "mega phone → Zarathustra")
         // ISO-8601 drops sub-second precision, so compare everything but dates.
         expectEqual(decoded.entries.map(\.term), store.entries.map(\.term))
         expectEqual(decoded.entries.map(\.source), store.entries.map(\.source))
@@ -244,7 +244,7 @@ enum DictionaryStoreTests {
         let (store, defaults) = makeStore()
         defer { clear(defaults) }
 
-        _ = try! store.addManual("Megaphone")
+        _ = try! store.addManual("Zarathustra")
         store.observe(candidateTerms: ["Kuber"]) // local suggestion
         store.observe(candidateTerms: ["Cursor"])
         store.dismissSuggestion(id: store.entries.first { $0.term == "Cursor" }!.id)
@@ -253,7 +253,7 @@ enum DictionaryStoreTests {
 
         let imported = [
             // Duplicate of a local active entry: stars and usage merge in.
-            DictionaryEntry(term: "megaphone", source: .manual, status: .active, starred: true, usageCount: 9),
+            DictionaryEntry(term: "zarathustra", source: .manual, status: .active, starred: true, usageCount: 9),
             // Explicitly taught on the other Mac: activates the local suggestion.
             DictionaryEntry(term: "Kuber", source: .manual, status: .active),
             // A mere suggestion elsewhere must not resurrect a local rejection.
@@ -268,9 +268,9 @@ enum DictionaryStoreTests {
 
         expectEqual(result.addedCount, 1)
         expectEqual(result.updatedCount, 3)
-        let megaphone = store.entries.first { $0.term == "Megaphone" }!
-        expectEqual(megaphone.starred, true)
-        expectEqual(megaphone.usageCount, 9)
+        let zarathustra = store.entries.first { $0.term == "Zarathustra" }!
+        expectEqual(zarathustra.starred, true)
+        expectEqual(zarathustra.usageCount, 9)
         expectEqual(store.entries.first { $0.term == "Kuber" }?.status, .active)
         expectEqual(store.entries.first { $0.term == "Cursor" }?.status, .rejected)
         let claurst = store.entries.first { $0.term == "Claurst" }!
@@ -297,10 +297,10 @@ enum DictionaryStoreTests {
 
     private static func testMergedCorrections() {
         let merged = DictionaryStore.mergedCorrections(
-            local: "mega phone → Megaphone\n",
-            imported: "MEGA PHONE → Megaphone\nkuber → Kuber\n\nkuber → Kuber"
+            local: "mega phone → Zarathustra\n",
+            imported: "MEGA PHONE → Zarathustra\nkuber → Kuber\n\nkuber → Kuber"
         )
-        expectEqual(merged.text, "mega phone → Megaphone\nkuber → Kuber")
+        expectEqual(merged.text, "mega phone → Zarathustra\nkuber → Kuber")
         expectEqual(merged.addedCount, 1)
 
         let fromEmpty = DictionaryStore.mergedCorrections(local: "", imported: "a → b")

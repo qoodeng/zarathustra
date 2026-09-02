@@ -7,7 +7,7 @@ import ApplicationServices
 import ScreenCaptureKit
 import Carbon
 import os.log
-private let recordingLog = OSLog(subsystem: "com.kuberwastaken.megaphone", category: "Recording")
+private let recordingLog = OSLog(subsystem: "com.qoodeng.zarathustra", category: "Recording")
 
 struct VoiceMacro: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
@@ -77,7 +77,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
 enum AppBuild {
     static var isDevBundle: Bool {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) == "Megaphone Dev"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) == "Zarathustra Dev"
     }
 }
 
@@ -151,6 +151,20 @@ private struct TranscriptCommandParsingResult {
     let shouldPressEnterAfterPaste: Bool
 }
 
+/// Immutable settings captured when a recording stops. The asynchronous
+/// transcription pipeline uses this snapshot rather than observing a mixture
+/// of values changed from Settings while the run is in flight.
+private struct DictationSessionConfiguration {
+    let dictionaryVocabulary: String
+    let wordCorrections: String
+    let customSystemPrompt: String
+    let customContextPrompt: String
+    let outputLanguage: String
+    let cleanupMode: SmartCleanupMode
+    let wakeCommandsEnabled: Bool
+    let plainZarathustraWakeWordEnabled: Bool
+}
+
 private enum CommandInvocation: String {
     case automatic
     case manual
@@ -212,7 +226,8 @@ private enum SessionIntent {
     }
 }
 
-final class AppState: ObservableObject, @unchecked Sendable {
+@MainActor
+final class AppState: ObservableObject {
     private enum ActiveAudioInterruption {
         case muted(previouslyMuted: Bool)
     }
@@ -239,6 +254,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let preserveClipboardStorageKey = "preserve_clipboard"
     private let preserveExactWordingStorageKey = "preserve_exact_wording"
     private let keepDictationInClipboardHistoryStorageKey = "keep_dictation_in_clipboard_history"
+    private let persistRunHistoryStorageKey = "persist_run_history"
+    private let retainRunAudioStorageKey = "retain_run_audio"
+    private let retainDiagnosticHistoryStorageKey = "retain_diagnostic_history"
+    private let runHistoryRetentionDaysStorageKey = "run_history_retention_days"
     private let pressEnterVoiceCommandStorageKey = "press_enter_voice_command_enabled"
     private let scratchThatCommandStorageKey = "scratch_that_command_enabled"
     private let alertSoundsEnabledStorageKey = "alert_sounds_enabled"
@@ -249,7 +268,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let voiceMacrosStorageKey = "voice_macros"
     private let userTransformsStorageKey = "user_transforms"
     private let wakeCommandsEnabledStorageKey = "wake_commands_enabled"
-    private let plainMegaphoneWakeWordEnabledStorageKey = "plain_megaphone_wake_word_enabled"
+    private let plainZarathustraWakeWordEnabledStorageKey = "plain_zarathustra_wake_word_enabled"
     private let wakeScreenContextEnabledStorageKey = "wake_screen_context_enabled"
     private let commandModeEnabledStorageKey = "command_mode_enabled"
     private let commandModeStyleStorageKey = "command_mode_style"
@@ -509,6 +528,31 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
+    @Published var persistRunHistory: Bool {
+        didSet {
+            UserDefaults.standard.set(persistRunHistory, forKey: persistRunHistoryStorageKey)
+        }
+    }
+
+    @Published var retainRunAudio: Bool {
+        didSet {
+            UserDefaults.standard.set(retainRunAudio, forKey: retainRunAudioStorageKey)
+        }
+    }
+
+    @Published var retainDiagnosticHistory: Bool {
+        didSet {
+            UserDefaults.standard.set(retainDiagnosticHistory, forKey: retainDiagnosticHistoryStorageKey)
+        }
+    }
+
+    @Published var runHistoryRetentionDays: Int {
+        didSet {
+            UserDefaults.standard.set(runHistoryRetentionDays, forKey: runHistoryRetentionDaysStorageKey)
+            prunePipelineHistory()
+        }
+    }
+
     @Published var isPressEnterVoiceCommandEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isPressEnterVoiceCommandEnabled, forKey: pressEnterVoiceCommandStorageKey)
@@ -576,9 +620,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         TransformStore.resolved(userTransforms: userTransforms)
     }
 
-    @Published var plainMegaphoneWakeWordEnabled: Bool {
+    @Published var plainZarathustraWakeWordEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(plainMegaphoneWakeWordEnabled, forKey: plainMegaphoneWakeWordEnabledStorageKey)
+            UserDefaults.standard.set(plainZarathustraWakeWordEnabled, forKey: plainZarathustraWakeWordEnabledStorageKey)
         }
     }
 
@@ -610,6 +654,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published var isDebugOverlayActive = false
     @Published var selectedSettingsTab: SettingsTab? = .general
     @Published var pipelineHistory: [PipelineHistoryItem] = []
+    @Published var pipelineHistoryStoreWarning: String?
     @Published var debugStatusMessage = "Idle"
     @Published var debugShowsUpdateReminderAfterDictation = false
     @Published var lastRawTranscript = ""
@@ -746,6 +791,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
             rawValue: UserDefaults.standard.string(forKey: smartCleanupModeStorageKey) ?? ""
         ) ?? (preserveExactWording ? .exact : .smart)
         let keepDictationInClipboardHistory = UserDefaults.standard.bool(forKey: keepDictationInClipboardHistoryStorageKey)
+        let persistRunHistory = UserDefaults.standard.object(forKey: persistRunHistoryStorageKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: persistRunHistoryStorageKey)
+        let retainRunAudio = UserDefaults.standard.bool(forKey: retainRunAudioStorageKey)
+        let retainDiagnosticHistory = UserDefaults.standard.bool(forKey: retainDiagnosticHistoryStorageKey)
+        let configuredRetentionDays = UserDefaults.standard.integer(forKey: runHistoryRetentionDaysStorageKey)
+        let runHistoryRetentionDays = [1, 7, 30].contains(configuredRetentionDays)
+            ? configuredRetentionDays
+            : 7
         let dictationAudioInterruptionEnabled = UserDefaults.standard.bool(
             forKey: dictationAudioInterruptionEnabledStorageKey
         )
@@ -778,8 +832,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         } else {
             initialUserTransforms = []
         }
-        let plainMegaphoneWakeWordEnabled = UserDefaults.standard.bool(
-            forKey: plainMegaphoneWakeWordEnabledStorageKey
+        let plainZarathustraWakeWordEnabled = UserDefaults.standard.bool(
+            forKey: plainZarathustraWakeWordEnabledStorageKey
         )
         let wakeCommandsEnabled = UserDefaults.standard.object(forKey: wakeCommandsEnabledStorageKey) == nil
             ? true
@@ -792,14 +846,26 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let initialScreenCapturePermission = CGPreflightScreenCaptureAccess()
         var removedAudioFileNames: [String] = []
         do {
-            removedAudioFileNames = try pipelineHistoryStore.trim(to: maxPipelineHistoryCount)
+            removedAudioFileNames = try pipelineHistoryStore.trim(
+                to: maxPipelineHistoryCount,
+                olderThan: Calendar.current.date(
+                    byAdding: .day,
+                    value: -runHistoryRetentionDays,
+                    to: Date()
+                )
+            )
         } catch {
             print("Failed to trim pipeline history during init: \(error)")
         }
         for audioFileName in removedAudioFileNames {
             Self.deleteAudioFile(audioFileName)
         }
-        let savedHistory = pipelineHistoryStore.loadAllHistory()
+        let savedHistory = persistRunHistory ? pipelineHistoryStore.loadAllHistory() : []
+        if persistRunHistory, pipelineHistoryStore.isPersistentStoreAvailable {
+            Self.reconcileAudioStorage(
+                referencedFileNames: Set(savedHistory.compactMap(\.audioFileName))
+            )
+        }
 
         let selectedMicrophoneID = UserDefaults.standard.string(forKey: selectedMicrophoneStorageKey) ?? "default"
 
@@ -832,6 +898,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.preserveClipboard = preserveClipboard
         self.preserveExactWording = smartCleanupMode == .exact
         self.keepDictationInClipboardHistory = keepDictationInClipboardHistory
+        self.persistRunHistory = persistRunHistory
+        self.retainRunAudio = retainRunAudio
+        self.retainDiagnosticHistory = retainDiagnosticHistory
+        self.runHistoryRetentionDays = runHistoryRetentionDays
         self.dictationAudioInterruptionEnabled = dictationAudioInterruptionEnabled
         self.isPressEnterVoiceCommandEnabled = isPressEnterVoiceCommandEnabled
         self.isScratchThatCommandEnabled = isScratchThatCommandEnabled
@@ -844,8 +914,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.userTransforms = initialUserTransforms
         self.wakeCommandsEnabled = wakeCommandsEnabled
         self.wakeScreenContextEnabled = wakeScreenContextEnabled
-        self.plainMegaphoneWakeWordEnabled = plainMegaphoneWakeWordEnabled
+        self.plainZarathustraWakeWordEnabled = plainZarathustraWakeWordEnabled
         self.pipelineHistory = savedHistory
+        self.pipelineHistoryStoreWarning = pipelineHistoryStore.loadFailureDescription
         self.hasAccessibility = initialAccessibility
         self.hasScreenRecordingPermission = initialScreenCapturePermission
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -915,7 +986,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
-        removeAudioDeviceObservers()
+        // A global-actor deinitializer is nonisolated. The observer tokens are
+        // exclusively owned by this instance, so tear them down directly
+        // instead of calling back through a @MainActor method.
+        let notificationCenter = NotificationCenter.default
+        for observer in audioDeviceObservers {
+            notificationCenter.removeObserver(observer)
+        }
         AppState.writeRecordingStateFlag(false)
     }
 
@@ -1046,17 +1123,20 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let fileURL: URL
     }
 
-    static func audioStorageDirectory() -> URL {
+    nonisolated static func audioStorageDirectory() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appName = AppName.displayName
         let audioDir = appSupport.appendingPathComponent("\(appName)/audio", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: audioDir.path) {
-            try? FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-        }
+        try? FileManager.default.createDirectory(
+            at: audioDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: audioDir.path)
         return audioDir
     }
 
-    /// URL of the flag file written while Megaphone is actively recording.
+    /// URL of the flag file written while Zarathustra is actively recording.
     ///
     /// External tools (voice assistants, TTS barge-in pipelines, conversation
     /// apps) can poll this file to know when the user is dictating. The file
@@ -1064,18 +1144,18 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// Contents are the UNIX timestamp (seconds, float) of when recording
     /// started — useful for stale-flag detection after an unclean exit.
     ///
-    /// Path: `~/Library/Application Support/Megaphone/is-recording`
-    /// (or `Megaphone Dev/is-recording` when running the dev bundle).
-    static func recordingStateFlagURL() -> URL {
+    /// Path: `~/Library/Application Support/Zarathustra/is-recording`
+    /// (or `Zarathustra Dev/is-recording` when running the dev bundle).
+    nonisolated static func recordingStateFlagURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Megaphone"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Zarathustra"
         return appSupport.appendingPathComponent("\(appName)/is-recording")
     }
 
     /// Serial queue that owns every flag-file I/O so the recording
     /// start/stop hot path never blocks on disk.
-    private static let recordingStateFlagQueue = DispatchQueue(
-        label: "com.kuberwastaken.megaphone.recording-state-flag"
+    nonisolated private static let recordingStateFlagQueue = DispatchQueue(
+        label: "com.qoodeng.zarathustra.recording-state-flag"
     )
 
     /// Write or clear the `is-recording` flag file. Called from the
@@ -1083,7 +1163,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     /// I/O never adds latency to recording start/stop. Failures are
     /// swallowed — this is advisory IPC and must never interrupt the
     /// recording pipeline.
-    static func writeRecordingStateFlag(_ recording: Bool) {
+    nonisolated static func writeRecordingStateFlag(_ recording: Bool) {
         let timestamp = recording ? String(Date().timeIntervalSince1970) : nil
         recordingStateFlagQueue.async {
             let url = recordingStateFlagURL()
@@ -1097,11 +1177,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    static func saveAudioFile(from tempURL: URL) -> SavedAudioFile? {
+    nonisolated static func saveAudioFile(from tempURL: URL) -> SavedAudioFile? {
         let fileName = UUID().uuidString + ".wav"
         let destURL = audioStorageDirectory().appendingPathComponent(fileName)
         do {
             try FileManager.default.copyItem(at: tempURL, to: destURL)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destURL.path)
             return SavedAudioFile(fileName: fileName, fileURL: destURL)
         } catch {
             os_log(
@@ -1117,9 +1198,48 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private static func deleteAudioFile(_ fileName: String) {
+    nonisolated private static func deleteAudioFile(_ fileName: String) {
         let fileURL = audioStorageDirectory().appendingPathComponent(fileName)
         try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    nonisolated private static func reconcileAudioStorage(referencedFileNames: Set<String>) {
+        let directory = audioStorageDirectory()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for file in files where file.pathExtension.lowercased() == "wav" {
+            if !referencedFileNames.contains(file.lastPathComponent) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    private func prunePipelineHistory() {
+        let cutoff = Calendar.current.date(
+            byAdding: .day,
+            value: -runHistoryRetentionDays,
+            to: Date()
+        )
+        do {
+            let removedAudioFileNames = try pipelineHistoryStore.trim(
+                to: maxPipelineHistoryCount,
+                olderThan: cutoff
+            )
+            removedAudioFileNames.forEach(Self.deleteAudioFile)
+            if persistRunHistory {
+                pipelineHistory = pipelineHistoryStore.loadAllHistory()
+            } else {
+                let retained = cutoff.map { cutoff in
+                    pipelineHistory.filter { $0.timestamp >= cutoff }
+                } ?? pipelineHistory
+                pipelineHistory = Array(retained.prefix(maxPipelineHistoryCount))
+            }
+        } catch {
+            errorMessage = "Unable to prune run history: \(error.localizedDescription)"
+        }
     }
 
     func clearPipelineHistory() {
@@ -1197,7 +1317,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                     outputLanguage: self.outputLanguage,
                     cleanupMode: self.smartCleanupMode,
                     wakeCommandsEnabled: self.wakeCommandsEnabled,
-                    plainMegaphoneWakeWordEnabled: self.plainMegaphoneWakeWordEnabled
+                    plainZarathustraWakeWordEnabled: self.plainZarathustraWakeWordEnabled
                 )
                 finalTranscript = result.finalTranscript
                 processingStatus = Self.statusMessage(
@@ -1421,17 +1541,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
         removeAudioDeviceObservers()
 
         let notificationCenter = NotificationCenter.default
-        let refreshOnAudioDeviceChange: (Notification) -> Void = { [weak self] notification in
+        let refreshOnAudioDeviceChange: @Sendable (Notification) -> Void = { [weak self] notification in
             guard let device = notification.object as? AVCaptureDevice,
                   device.hasMediaType(.audio) else {
                 return
             }
-            self?.refreshAvailableMicrophones()
+            Task { @MainActor [weak self] in
+                self?.refreshAvailableMicrophones()
+            }
         }
 
         audioDeviceObservers.append(
             notificationCenter.addObserver(
-                forName: .AVCaptureDeviceWasConnected,
+                forName: AVCaptureDevice.wasConnectedNotification,
                 object: nil,
                 queue: .main,
                 using: refreshOnAudioDeviceChange
@@ -1439,7 +1561,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         )
         audioDeviceObservers.append(
             notificationCenter.addObserver(
-                forName: .AVCaptureDeviceWasDisconnected,
+                forName: AVCaptureDevice.wasDisconnectedNotification,
                 object: nil,
                 queue: .main,
                 using: refreshOnAudioDeviceChange
@@ -1868,7 +1990,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     /// After a successful revert the literal transcript is what sits before
     /// the caret, so it becomes the tracked previous text: follow-up wake
-    /// commands ("megaphone, make that shorter") must edit the reverted
+    /// commands ("zarathustra, make that shorter") must edit the reverted
     /// words, and Paste Again must repeat them.
     @MainActor
     private func recordRawRevert(of item: PipelineHistoryItem, rawTranscript: String) {
@@ -2272,13 +2394,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
     private func beginCriticalDictationActivity() {
         guard !automaticTerminationDisabled else { return }
-        ProcessInfo.processInfo.disableAutomaticTermination("Megaphone dictation in progress")
+        ProcessInfo.processInfo.disableAutomaticTermination("Zarathustra dictation in progress")
         automaticTerminationDisabled = true
     }
 
     private func endCriticalDictationActivity() {
         guard automaticTerminationDisabled else { return }
-        ProcessInfo.processInfo.enableAutomaticTermination("Megaphone dictation in progress")
+        ProcessInfo.processInfo.enableAutomaticTermination("Zarathustra dictation in progress")
         automaticTerminationDisabled = false
     }
 
@@ -2354,16 +2476,17 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
 
         // Start engine on background thread so UI isn't blocked
+        let recorder = audioRecorder
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let t0 = CFAbsoluteTimeGetCurrent()
             do {
-                try self.audioRecorder.startRecording(deviceUID: deviceUID)
+                try recorder.startRecording(deviceUID: deviceUID)
                 os_log(.info, log: recordingLog, "audioRecorder.startRecording() done: %.3fms", (CFAbsoluteTimeGetCurrent() - t0) * 1000)
                 DispatchQueue.main.async {
                     guard self.isRecording, self.activeRecordingTriggerMode != nil else { return }
                     self.startContextCapture()
-                    self.audioLevelCancellable = self.audioRecorder.$audioLevel
+                    self.audioLevelCancellable = recorder.$audioLevel
                         .receive(on: DispatchQueue.main)
                         .sink { [weak self] level in
                             self?.overlayManager.updateAudioLevel(level)
@@ -2679,7 +2802,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
         outputLanguage: String = "",
         cleanupMode: SmartCleanupMode,
         wakeCommandsEnabled: Bool,
-        plainMegaphoneWakeWordEnabled: Bool,
+        plainZarathustraWakeWordEnabled: Bool,
         previousText: String? = nil,
         smartSessionID: UUID? = nil
     ) async -> (
@@ -2709,7 +2832,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
 
         if wakeCommandsEnabled, case .dictation = intent, let wake = WakePhraseMatcher.detect(
             in: trimmedRawTranscript,
-            plainMegaphoneEnabled: plainMegaphoneWakeWordEnabled
+            plainZarathustraEnabled: plainZarathustraWakeWordEnabled
         ) {
             let command = wake.trailingText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !command.isEmpty else {
@@ -2941,13 +3064,25 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 return
             }
 
-            let savedAudioFile = Self.saveAudioFile(from: fileURL)
+            let savedAudioFile = self.persistRunHistory && self.retainRunAudio
+                ? Self.saveAudioFile(from: fileURL)
+                : nil
             let transcriptionFileURL = savedAudioFile?.fileURL ?? fileURL
             self.transcribingAudioFileName = savedAudioFile?.fileName
             self.statusText = "Transcribing..."
             self.debugStatusMessage = "Transcribing audio"
 
             let activeStreamingSession = self.nativeStreamingSession
+            let sessionConfiguration = DictationSessionConfiguration(
+                dictionaryVocabulary: self.dictionaryVocabulary,
+                wordCorrections: self.wordCorrections,
+                customSystemPrompt: self.customSystemPrompt,
+                customContextPrompt: self.customContextPrompt,
+                outputLanguage: self.outputLanguage,
+                cleanupMode: self.smartCleanupMode,
+                wakeCommandsEnabled: self.wakeCommandsEnabled,
+                plainZarathustraWakeWordEnabled: self.plainZarathustraWakeWordEnabled
+            )
             self.nativeStreamingSession = nil
             self.audioRecorder.onPCM16Samples = nil
             self.transcriptionTask?.cancel()
@@ -3029,14 +3164,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
                         parsedTranscript.transcript,
                         intent: sessionIntent,
                         context: appContext,
-                        customVocabulary: self.dictionaryVocabulary,
-                        wordCorrections: self.wordCorrections,
-                        customSystemPrompt: self.customSystemPrompt,
-                        customContextPrompt: self.customContextPrompt,
-                        outputLanguage: self.outputLanguage,
-                        cleanupMode: self.smartCleanupMode,
-                        wakeCommandsEnabled: self.wakeCommandsEnabled,
-                        plainMegaphoneWakeWordEnabled: self.plainMegaphoneWakeWordEnabled,
+                        customVocabulary: sessionConfiguration.dictionaryVocabulary,
+                        wordCorrections: sessionConfiguration.wordCorrections,
+                        customSystemPrompt: sessionConfiguration.customSystemPrompt,
+                        customContextPrompt: sessionConfiguration.customContextPrompt,
+                        outputLanguage: sessionConfiguration.outputLanguage,
+                        cleanupMode: sessionConfiguration.cleanupMode,
+                        wakeCommandsEnabled: sessionConfiguration.wakeCommandsEnabled,
+                        plainZarathustraWakeWordEnabled: sessionConfiguration.plainZarathustraWakeWordEnabled,
                         previousText: previousText,
                         smartSessionID: cleanupSessionID
                     )
@@ -3079,7 +3214,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             rawTranscript: trimmedRawTranscript,
                             postProcessedTranscript: trimmedFinalTranscript,
                             postProcessingPrompt: result.prompt,
-                            systemPrompt: Self.resolvedSystemPrompt(self.customSystemPrompt),
+                            systemPrompt: Self.resolvedSystemPrompt(sessionConfiguration.customSystemPrompt),
                             context: appContext,
                             processingStatus: processingStatus,
                             intent: sessionIntent,
@@ -3181,7 +3316,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                             rawTranscript: "",
                             postProcessedTranscript: "",
                             postProcessingPrompt: "",
-                            systemPrompt: Self.resolvedSystemPrompt(self.customSystemPrompt),
+                            systemPrompt: Self.resolvedSystemPrompt(sessionConfiguration.customSystemPrompt),
                             context: resolvedContext,
                             processingStatus: "Error: \(error.localizedDescription)",
                             intent: sessionIntent,
@@ -3211,35 +3346,57 @@ final class AppState: ObservableObject, @unchecked Sendable {
         intent: SessionIntent,
         audioFileName: String? = nil
     ) {
+        let includeDiagnostics = retainDiagnosticHistory
         let newEntry = PipelineHistoryItem(
             intent: intent.persistedIntent,
-            selectedText: intent.persistedSelectedText,
-            capturedSelection: context.selectedText,
+            selectedText: includeDiagnostics ? intent.persistedSelectedText : nil,
+            capturedSelection: includeDiagnostics ? context.selectedText : nil,
             timestamp: Date(),
             rawTranscript: rawTranscript,
             postProcessedTranscript: postProcessedTranscript,
-            postProcessingPrompt: postProcessingPrompt,
-            systemPrompt: systemPrompt,
-            contextSummary: context.contextSummary,
+            postProcessingPrompt: includeDiagnostics ? postProcessingPrompt : nil,
+            systemPrompt: includeDiagnostics ? systemPrompt : nil,
+            contextSummary: includeDiagnostics ? context.contextSummary : "",
             contextSystemPrompt: nil,
             contextPrompt: nil,
             contextScreenshotDataURL: nil,
             contextScreenshotStatus: "Not captured (local-only)",
             postProcessingStatus: processingStatus,
-            debugStatus: debugStatusMessage,
-            customVocabulary: dictionaryVocabulary,
+            debugStatus: includeDiagnostics ? debugStatusMessage : "",
+            customVocabulary: includeDiagnostics ? dictionaryVocabulary : "",
             audioFileName: audioFileName,
-            contextAppName: context.appName,
-            contextBundleIdentifier: context.bundleIdentifier,
-            contextWindowTitle: context.windowTitle
+            contextAppName: includeDiagnostics ? context.appName : nil,
+            contextBundleIdentifier: includeDiagnostics ? context.bundleIdentifier : nil,
+            contextWindowTitle: includeDiagnostics ? context.windowTitle : nil
         )
+
+        guard persistRunHistory else {
+            pipelineHistory.insert(newEntry, at: 0)
+            pipelineHistory = Array(pipelineHistory.prefix(maxPipelineHistoryCount))
+            return
+        }
+
         do {
-            let removedAudioFileNames = try pipelineHistoryStore.append(newEntry, maxCount: maxPipelineHistoryCount)
+            var removedAudioFileNames = try pipelineHistoryStore.append(
+                newEntry,
+                maxCount: maxPipelineHistoryCount
+            )
+            removedAudioFileNames += try pipelineHistoryStore.trim(
+                to: maxPipelineHistoryCount,
+                olderThan: Calendar.current.date(
+                    byAdding: .day,
+                    value: -runHistoryRetentionDays,
+                    to: Date()
+                )
+            )
             for audioFileName in removedAudioFileNames {
                 Self.deleteAudioFile(audioFileName)
             }
             pipelineHistory = pipelineHistoryStore.loadAllHistory()
         } catch {
+            if let audioFileName {
+                Self.deleteAudioFile(audioFileName)
+            }
             errorMessage = "Unable to save run history entry: \(error.localizedDescription)"
         }
     }
@@ -3459,13 +3616,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         // Simulate audio levels with a timer
         var phase: Double = 0.0
         debugOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            phase += 0.15
-            // Generate a fake audio level that oscillates like speech
-            let base = 0.3 + 0.2 * sin(phase)
-            let noise = Float.random(in: -0.15...0.15)
-            let level = min(max(Float(base) + noise, 0.0), 1.0)
-            self.overlayManager.updateAudioLevel(level)
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                phase += 0.15
+                // Generate a fake audio level that oscillates like speech
+                let base = 0.3 + 0.2 * sin(phase)
+                let noise = Float.random(in: -0.15...0.15)
+                let level = min(max(Float(base) + noise, 0.0), 1.0)
+                self.overlayManager.updateAudioLevel(level)
+            }
         }
     }
 

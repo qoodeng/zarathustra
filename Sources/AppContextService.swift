@@ -24,7 +24,7 @@ struct AppContext {
 
 /// Reads lightweight, on-device context about the app the user is dictating
 /// into: frontmost app identity, focused window title, and selected text via
-/// the accessibility APIs. Megaphone is local-only; nothing here talks to a
+/// the accessibility APIs. Zarathustra is local-only; nothing here talks to a
 /// network.
 final class AppContextService {
     /// How much text before the caret is captured as continuation context.
@@ -53,14 +53,14 @@ final class AppContextService {
 
     /// Selects `text` only when it is still immediately before the caret in
     /// the focused editable element. This makes follow-up edits safe: if the
-    /// user moved the caret or changed the content, Megaphone leaves it alone.
+    /// user moved the caret or changed the content, Zarathustra leaves it alone.
     func selectTextImmediatelyBeforeCaret(matching text: String) -> Bool {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return false }
         let appElement = AXUIElementCreateApplication(frontmostApp.processIdentifier)
         guard let focusedElement = accessibilityElement(
             from: appElement,
             attribute: kAXFocusedUIElementAttribute as CFString
-        ), let value = accessibilityRawString(
+        ), !isSecureTextElement(focusedElement), let value = accessibilityRawString(
             from: focusedElement,
             attribute: kAXValueAttribute as CFString
         ), var selectedRange = accessibilityRange(
@@ -163,12 +163,7 @@ final class AppContextService {
         ) else { return nil }
         // Secure fields report "AXSecureTextField" as the subrole (native
         // AppKit) or occasionally as the role itself (some web views).
-        let secureMarker = NSAccessibility.Subrole.secureTextField.rawValue
-        let role = accessibilityRawString(from: focusedElement, attribute: kAXRoleAttribute as CFString)
-        let subrole = accessibilityRawString(from: focusedElement, attribute: kAXSubroleAttribute as CFString)
-        if role == secureMarker || subrole == secureMarker {
-            return nil
-        }
+        guard !isSecureTextElement(focusedElement) else { return nil }
         guard let value = accessibilityRawString(
             from: focusedElement,
             attribute: kAXValueAttribute as CFString
@@ -206,9 +201,14 @@ final class AppContextService {
     }
 
     private func selectedText(from appElement: AXUIElement) -> String? {
-        if let focusedElement = accessibilityElement(from: appElement, attribute: kAXFocusedUIElementAttribute as CFString),
-           let selectedText = accessibilityString(from: focusedElement, attribute: kAXSelectedTextAttribute as CFString) {
-            return trimmedText(selectedText)
+        if let focusedElement = accessibilityElement(from: appElement, attribute: kAXFocusedUIElementAttribute as CFString) {
+            guard !isSecureTextElement(focusedElement) else { return nil }
+            if let selectedText = accessibilityString(
+                from: focusedElement,
+                attribute: kAXSelectedTextAttribute as CFString
+            ) {
+                return trimmedText(selectedText)
+            }
         }
 
         if let selectedText = accessibilityString(from: appElement, attribute: kAXSelectedTextAttribute as CFString) {
@@ -219,9 +219,14 @@ final class AppContextService {
     }
 
     private func rawSelectedText(from appElement: AXUIElement) -> String? {
-        if let focusedElement = accessibilityElement(from: appElement, attribute: kAXFocusedUIElementAttribute as CFString),
-           let selectedText = accessibilityRawString(from: focusedElement, attribute: kAXSelectedTextAttribute as CFString) {
-            return selectedText
+        if let focusedElement = accessibilityElement(from: appElement, attribute: kAXFocusedUIElementAttribute as CFString) {
+            guard !isSecureTextElement(focusedElement) else { return nil }
+            if let selectedText = accessibilityRawString(
+                from: focusedElement,
+                attribute: kAXSelectedTextAttribute as CFString
+            ) {
+                return selectedText
+            }
         }
 
         if let selectedText = accessibilityRawString(from: appElement, attribute: kAXSelectedTextAttribute as CFString) {
@@ -229,6 +234,13 @@ final class AppContextService {
         }
 
         return nil
+    }
+
+    private func isSecureTextElement(_ element: AXUIElement) -> Bool {
+        let secureMarker = NSAccessibility.Subrole.secureTextField.rawValue
+        let role = accessibilityRawString(from: element, attribute: kAXRoleAttribute as CFString)
+        let subrole = accessibilityRawString(from: element, attribute: kAXSubroleAttribute as CFString)
+        return role == secureMarker || subrole == secureMarker
     }
 
     private func accessibilityElement(from element: AXUIElement, attribute: CFString) -> AXUIElement? {

@@ -1,7 +1,8 @@
 import SwiftUI
 import FoundationModels
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     var setupWindow: NSWindow?
     private var settingsWindow: NSWindow?
@@ -53,7 +54,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "Turn on Apple Intelligence for Smart Cleanup"
-        alert.informativeText = "Smart Cleanup runs Apple's language model entirely on your Mac. You can turn it on now, or use Megaphone's instant Basic Cleanup instead."
+        alert.informativeText = "Smart Cleanup runs Apple's language model entirely on your Mac. You can turn it on now, or use Zarathustra's instant Basic Cleanup instead."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Use Basic")
         alert.addButton(withTitle: "Not Now")
@@ -100,14 +101,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                guard let self = self else { return }
-                if !self.appState.hasCompletedSetup {
-                    self.appState.hasCompletedSetup = true
-                    self.appState.startHotkeyMonitoring()
-                    self.appState.startAccessibilityPolling()
-                    NSApp.setActivationPolicy(.accessory)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if !self.appState.hasCompletedSetup {
+                        self.appState.hasCompletedSetup = true
+                        self.appState.startHotkeyMonitoring()
+                        self.appState.startAccessibilityPolling()
+                        NSApp.setActivationPolicy(.accessory)
+                    }
+                    self.setupWindow = nil
                 }
-                self.setupWindow = nil
             }
         }
     }
@@ -158,10 +161,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            if self?.setupWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor [weak self] in
+                if self?.setupWindow == nil {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+                self?.settingsWindow = nil
             }
-            self?.settingsWindow = nil
         }
     }
 

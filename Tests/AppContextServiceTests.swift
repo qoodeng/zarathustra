@@ -30,7 +30,8 @@ struct AppContextServiceTests {
         MouseDictationButtonTests.run()
         SmartCleanupValidationTests.run()
         StructuredOutputUnwrapTests.run()
-        print("MegaphoneTests passed")
+        RemediationRegressionTests.run()
+        print("ZarathustraTests passed")
     }
 
     private static func testWakeCommandIncludesPreviousTextAndScreenContext() {
@@ -42,7 +43,7 @@ struct AppContextServiceTests {
             contextSummary: "The user is composing an email reply.",
             selectedText: "Earlier text selected in the draft.",
             previousText: "hey, can you send this over by friday?",
-            vocabulary: ["Megaphone"]
+            vocabulary: ["Zarathustra"]
         )
 
         expect(prompt.contains("RECENT TEXT INSERTED BY THE USER:"), "Previous-text label missing")
@@ -66,7 +67,7 @@ struct AppContextServiceTests {
             contextSummary: "",
             selectedText: nil,
             previousText: nil,
-            screenText: "From: Sam\nSubject: Trying Megaphone\nLoving the app so far!",
+            screenText: "From: Sam\nSubject: Trying Zarathustra\nLoving the app so far!",
             vocabulary: []
         )
         expect(withScreen.contains("VISIBLE WINDOW TEXT"), "Screen text section missing")
@@ -117,7 +118,7 @@ struct AppContextServiceTests {
             "Obsidian should be a markdown surface"
         )
         expect(
-            AppWritingContext.supportsMarkdown(appName: "Google Chrome", bundleIdentifier: "com.google.Chrome", windowTitle: "Editing megaphone/README.md at main · Kuberwastaken/megaphone · GitHub"),
+            AppWritingContext.supportsMarkdown(appName: "Google Chrome", bundleIdentifier: "com.google.Chrome", windowTitle: "Editing zarathustra/README.md at main · qoodeng/zarathustra · GitHub"),
             "GitHub in a browser should be a markdown surface"
         )
         expect(
@@ -181,7 +182,7 @@ struct AppContextServiceTests {
             "Google Docs should use document writing context"
         )
         expect(
-            AppWritingContext.classify(appName: "Safari", bundleIdentifier: "com.apple.Safari", windowTitle: "Megaphone | Slack") == .workChat,
+            AppWritingContext.classify(appName: "Safari", bundleIdentifier: "com.apple.Safari", windowTitle: "Zarathustra | Slack") == .workChat,
             "Slack in a browser should use work-chat writing context"
         )
         expect(
@@ -211,7 +212,7 @@ struct AppContextServiceTests {
             transcript: "uh hey can you send that by friday",
             appName: "Slack",
             bundleIdentifier: "com.tinyspeck.slackmacgap",
-            windowTitle: "Megaphone | project",
+            windowTitle: "Zarathustra | project",
             selectedText: nil,
             contextSummary: "",
             vocabulary: [],
@@ -408,7 +409,7 @@ struct AppContextServiceTests {
             appName: "Mail",
             bundleIdentifier: "com.apple.mail",
             windowTitle: "Draft — Launch",
-            vocabulary: ["Megaphone"]
+            vocabulary: ["Zarathustra"]
         )
 
         expect(!prompt.contains("com.apple.mail"), "Raw bundle identifier should not enter the edit prompt")
@@ -493,7 +494,7 @@ struct AppContextServiceTests {
             command: "reply saying thanks",
             appName: "Slack",
             bundleIdentifier: "com.tinyspeck.slackmacgap",
-            windowTitle: "Megaphone | project",
+            windowTitle: "Zarathustra | project",
             contextSummary: "",
             selectedText: nil,
             previousText: nil,
@@ -585,11 +586,11 @@ struct AppContextServiceTests {
 
         let prompt = AppleFoundationModelsPostProcessor.transformPrompt(
             text: "so basically we should ship on friday",
-            vocabulary: ["Megaphone"]
+            vocabulary: ["Zarathustra"]
         )
         expect(prompt.contains("<source_text>"), "Tagged source block missing")
         expect(prompt.contains("so basically we should ship on friday"), "Source text missing from prompt")
-        expect(prompt.contains("Preferred spellings: Megaphone"), "Vocabulary hint missing")
+        expect(prompt.contains("Preferred spellings: Zarathustra"), "Vocabulary hint missing")
 
         let bare = AppleFoundationModelsPostProcessor.transformPrompt(text: "hello", vocabulary: [])
         expect(!bare.contains("Preferred spellings"), "Empty vocabulary must not add a hint")

@@ -1,13 +1,13 @@
 import Foundation
 
 enum WakePhrase: String, Equatable {
-    case heyMegaphone
-    case megaphone
+    case heyZarathustra
+    case zarathustra
 
     var displayName: String {
         switch self {
-        case .heyMegaphone: return "Hey Megaphone"
-        case .megaphone: return "Megaphone"
+        case .heyZarathustra: return "Hey Zarathustra"
+        case .zarathustra: return "Zarathustra"
         }
     }
 }
@@ -24,19 +24,19 @@ struct WakePhraseMatch: Equatable {
 /// transcript is observed after the cooldown, or the caller explicitly rearms
 /// the matcher for a new recognition session.
 struct WakePhraseMatcher {
-    var plainMegaphoneEnabled: Bool
+    var plainZarathustraEnabled: Bool
     var cooldown: TimeInterval
 
     private var isArmed = true
     private var lastMatchDate: Date?
 
-    init(plainMegaphoneEnabled: Bool = false, cooldown: TimeInterval = 1.0) {
-        self.plainMegaphoneEnabled = plainMegaphoneEnabled
+    init(plainZarathustraEnabled: Bool = false, cooldown: TimeInterval = 1.0) {
+        self.plainZarathustraEnabled = plainZarathustraEnabled
         self.cooldown = max(0, cooldown)
     }
 
     mutating func observe(_ transcript: String, at date: Date = Date()) -> WakePhraseMatch? {
-        let detected = Self.detect(in: transcript, plainMegaphoneEnabled: plainMegaphoneEnabled)
+        let detected = Self.detect(in: transcript, plainZarathustraEnabled: plainZarathustraEnabled)
 
         guard isArmed else {
             if detected == nil, cooldownHasElapsed(at: date) {
@@ -58,29 +58,28 @@ struct WakePhraseMatcher {
 
     static func detect(
         in transcript: String,
-        plainMegaphoneEnabled: Bool = false
+        plainZarathustraEnabled: Bool = false
     ) -> WakePhraseMatch? {
-        if let match = match(pattern: heyPattern, phrase: .heyMegaphone, in: transcript) {
+        if let match = match(pattern: heyPattern, phrase: .heyZarathustra, in: transcript) {
             return match
         }
         // SpeechAnalyzer occasionally drops the quiet leading “Hey” while
         // still returning the distinctive segmented product name. Recover
-        // only “mega phone” here; broader acoustic aliases stay Hey-gated.
-        if let match = match(pattern: segmentedRecoveryPattern, phrase: .heyMegaphone, in: transcript) {
+        // only a clearly segmented “Zara Thustra” here; broader acoustic
+        // aliases stay Hey-gated.
+        if let match = match(pattern: segmentedRecoveryPattern, phrase: .heyZarathustra, in: transcript) {
             return match
         }
-        guard plainMegaphoneEnabled else { return nil }
-        return match(pattern: plainPattern, phrase: .megaphone, in: transcript)
+        guard plainZarathustraEnabled else { return nil }
+        return match(pattern: plainPattern, phrase: .zarathustra, in: transcript)
     }
 
     static let recognitionHints = [
-        "Hey Megaphone",
-        "Megaphone",
-        "Hey Mega Phone",
-        "Hey Make a Phone",
-        "Hey Made a Phone",
-        "Hey Mega Foam",
-        "Hey Mega Form"
+        "Hey Zarathustra",
+        "Zarathustra",
+        "Hey Zara Thustra",
+        "Hey Sarah Thustra",
+        "Hey Zoroaster"
     ]
 
     private func cooldownHasElapsed(at date: Date) -> Bool {
@@ -114,46 +113,28 @@ struct WakePhraseMatcher {
     // vocabulary. Vocabulary hints should teach the correct product spelling;
     // these hidden aliases only recover common acoustic substitutions after
     // transcription. Fuzzy forms require the leading “Hey” phrase so enabling
-    // the optional plain trigger cannot turn “make a phone call” into a command.
-    private static let strictMegaphoneVariants = "(?:megaphone|mega" + phraseSeparator + "phone)"
-    private static let fuzzyMegaphoneVariants = "(?:" + [
-        strictMegaphoneVariants,
-        "mega" + phraseSeparator + "fone",
-        "mega" + phraseSeparator + "foam",
-        "mega" + phraseSeparator + "form",
-        "mega" + phraseSeparator + "phoned",
-        "megafone",
-        "megafoam",
-        "megaform",
-        "megha" + phraseSeparator + "phone",
-        "mecca" + phraseSeparator + "phone",
-        "mecha" + phraseSeparator + "phone",
-        "meg" + phraseSeparator + "a" + phraseSeparator + "phone",
-        "make" + phraseSeparator + "a" + phraseSeparator + "phone",
-        "made" + phraseSeparator + "a" + phraseSeparator + "phone",
-        "make" + phraseSeparator + "the" + phraseSeparator + "phone",
-        "made" + phraseSeparator + "the" + phraseSeparator + "phone",
-        "make" + phraseSeparator + "phone",
-        "made" + phraseSeparator + "phone",
-        "make" + phraseSeparator + "a" + phraseSeparator + "foam",
-        "made" + phraseSeparator + "a" + phraseSeparator + "foam",
-        "make" + phraseSeparator + "a" + phraseSeparator + "form",
-        "made" + phraseSeparator + "a" + phraseSeparator + "form",
-        "make" + phraseSeparator + "up" + phraseSeparator + "phone",
-        "made" + phraseSeparator + "up" + phraseSeparator + "phone"
+    // the optional plain trigger cannot turn a similar ordinary phrase into a
+    // command.
+    private static let strictZarathustraVariants = "(?:zarathustra|zara" + phraseSeparator + "thustra)"
+    private static let fuzzyZarathustraVariants = "(?:" + [
+        strictZarathustraVariants,
+        "sarah" + phraseSeparator + "thustra",
+        "zara" + phraseSeparator + "thuster",
+        "zara" + phraseSeparator + "thustra",
+        "zoroaster"
     ].joined(separator: "|") + ")"
     private static let heyVariants = "(?:hey|he|hay|hi)"
 
     private static let heyPattern = try! NSRegularExpression(
-        pattern: leadingSeparators + heyVariants + phraseSeparator + fuzzyMegaphoneVariants + phraseBoundary,
+        pattern: leadingSeparators + heyVariants + phraseSeparator + fuzzyZarathustraVariants + phraseBoundary,
         options: [.caseInsensitive]
     )
     private static let plainPattern = try! NSRegularExpression(
-        pattern: leadingSeparators + "megaphone" + phraseBoundary,
+        pattern: leadingSeparators + "zarathustra" + phraseBoundary,
         options: [.caseInsensitive]
     )
     private static let segmentedRecoveryPattern = try! NSRegularExpression(
-        pattern: leadingSeparators + "mega" + phraseSeparator + "phone" + phraseBoundary,
+        pattern: leadingSeparators + "zara" + phraseSeparator + "thustra" + phraseBoundary,
         options: [.caseInsensitive]
     )
     private static let trailingSeparators = CharacterSet.whitespacesAndNewlines

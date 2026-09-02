@@ -4,20 +4,32 @@ import CoreData
 final class PipelineHistoryStore {
     private let container: NSPersistentContainer
     private let isStoreLoaded: Bool
+    let isPersistentStoreAvailable: Bool
+    let loadFailureDescription: String?
 
-    init() {
+    init(storeURL explicitStoreURL: URL? = nil, inMemory: Bool = false) {
         let model = Self.makeModel()
         container = NSPersistentContainer(name: "PipelineHistory", managedObjectModel: model)
 
-        var storeURL: URL?
-        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+        var storeURL = explicitStoreURL
+        if !inMemory, storeURL == nil,
+           let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             let appName = AppName.displayName
             let baseURL = appSupport.appendingPathComponent(appName, isDirectory: true)
-            try? FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(
+                at: baseURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseURL.path)
             storeURL = baseURL.appendingPathComponent("PipelineHistory.sqlite")
         }
 
-        if let storeURL {
+        if inMemory {
+            let description = NSPersistentStoreDescription()
+            description.type = NSInMemoryStoreType
+            container.persistentStoreDescriptions = [description]
+        } else if let storeURL {
             let description = NSPersistentStoreDescription(url: storeURL)
             description.shouldMigrateStoreAutomatically = true
             description.shouldInferMappingModelAutomatically = true
@@ -28,36 +40,29 @@ final class PipelineHistoryStore {
 
         if Self.loadPersistentStoresSynchronously(container: container) == nil {
             isStoreLoaded = true
+            isPersistentStoreAvailable = !inMemory
+            loadFailureDescription = nil
+            if let storeURL, !inMemory {
+                Self.hardenSQLiteFilePermissions(at: storeURL)
+            }
         } else {
-            if let storeURL {
-                print("[PipelineHistoryStore] Failed to load persistent store at \(storeURL.path). Attempting recovery.")
-                Self.destroySQLiteStoreFiles(at: storeURL)
+            let location = storeURL?.path ?? "the default location"
+            let failureDescription = "Run history could not be opened at \(location). The existing database was left untouched; this session will use memory-only history."
+            loadFailureDescription = failureDescription
+            print("[PipelineHistoryStore] \(failureDescription)")
 
-                // Clear any partially loaded stores and reset descriptions before retrying.
-                let coordinator = container.persistentStoreCoordinator
-                for store in coordinator.persistentStores {
-                    try? coordinator.remove(store)
-                }
-
-                let recoveryDescription = NSPersistentStoreDescription(url: storeURL)
-                recoveryDescription.shouldMigrateStoreAutomatically = true
-                recoveryDescription.shouldInferMappingModelAutomatically = true
-                container.persistentStoreDescriptions = [recoveryDescription]
+            // Never delete or overwrite a store merely because Core Data could
+            // not load it. Keep the SQLite, WAL, and SHM files available for
+            // diagnosis/recovery and use a volatile store for this session.
+            let coordinator = container.persistentStoreCoordinator
+            for store in coordinator.persistentStores {
+                try? coordinator.remove(store)
             }
-
-            if Self.loadPersistentStoresSynchronously(container: container) == nil {
-                isStoreLoaded = true
-            } else {
-                print("[PipelineHistoryStore] Failed to recover persistent store. Falling back to in-memory history.")
-                let coordinator = container.persistentStoreCoordinator
-                for store in coordinator.persistentStores {
-                    try? coordinator.remove(store)
-                }
-                let description = NSPersistentStoreDescription()
-                description.type = NSInMemoryStoreType
-                container.persistentStoreDescriptions = [description]
-                isStoreLoaded = Self.loadPersistentStoresSynchronously(container: container) == nil
-            }
+            let description = NSPersistentStoreDescription()
+            description.type = NSInMemoryStoreType
+            container.persistentStoreDescriptions = [description]
+            isStoreLoaded = Self.loadPersistentStoresSynchronously(container: container) == nil
+            isPersistentStoreAvailable = false
         }
     }
 
@@ -154,6 +159,10 @@ final class PipelineHistoryStore {
     }
 
     func trim(to maxCount: Int) throws -> [String] {
+        try trim(to: maxCount, olderThan: nil)
+    }
+
+    func trim(to maxCount: Int, olderThan cutoff: Date?) throws -> [String] {
         guard isStoreLoaded else { return [] }
         guard maxCount > 0 else {
             let audioFileNames = try clearAll()
@@ -166,8 +175,13 @@ final class PipelineHistoryStore {
             do {
                 let request = pipelineHistoryRequest()
                 request.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
-                guard let entities = try? container.viewContext.fetch(request), entities.count > maxCount else { return }
-                let dropped = entities[maxCount...]
+                guard let entities = try? container.viewContext.fetch(request) else { return }
+                let dropped = entities.enumerated().compactMap { index, entity -> PipelineHistoryEntry? in
+                    let exceedsCount = index >= maxCount
+                    let expired = cutoff.map { (entity.timestamp ?? .distantPast) < $0 } ?? false
+                    return exceedsCount || expired ? entity : nil
+                }
+                guard !dropped.isEmpty else { return }
                 audioFileNames = dropped.compactMap(\.audioFileName)
                 for entity in dropped {
                     container.viewContext.delete(entity)
@@ -257,14 +271,6 @@ final class PipelineHistoryStore {
         return capturedError
     }
 
-    private static func destroySQLiteStoreFiles(at storeURL: URL) {
-        let basePath = storeURL.path
-        let fileManager = FileManager.default
-        for path in [basePath, basePath + "-wal", basePath + "-shm"] {
-            try? fileManager.removeItem(atPath: path)
-        }
-    }
-
     private static func makeHistoryItem(from entity: PipelineHistoryEntry) -> PipelineHistoryItem {
         PipelineHistoryItem(
             intent: PipelineHistoryItemIntent(rawValue: entity.intent ?? "") ?? .dictation,
@@ -289,6 +295,14 @@ final class PipelineHistoryStore {
             contextBundleIdentifier: entity.contextBundleIdentifier,
             contextWindowTitle: entity.contextWindowTitle
         )
+    }
+
+    private static func hardenSQLiteFilePermissions(at storeURL: URL) {
+        let fileManager = FileManager.default
+        for path in [storeURL.path, storeURL.path + "-wal", storeURL.path + "-shm"] {
+            guard fileManager.fileExists(atPath: path) else { continue }
+            try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        }
     }
 
     private static func makeModel() -> NSManagedObjectModel {

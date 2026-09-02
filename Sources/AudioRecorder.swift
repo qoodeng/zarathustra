@@ -3,7 +3,7 @@ import CoreMedia
 import Foundation
 import os.log
 
-private let recordingLog = OSLog(subsystem: "com.kuberwastaken.megaphone", category: "Recording")
+private let recordingLog = OSLog(subsystem: "com.qoodeng.zarathustra", category: "Recording")
 
 struct AudioDevice: Identifiable {
     let id: String
@@ -79,8 +79,8 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
     private let _bufferCount = OSAllocatedUnfairLock(initialState: 0)
     private let fileWriteErrorLock = OSAllocatedUnfairLock(initialState: ())
     private var watchdogTimer: DispatchSourceTimer?
-    private let sessionQueue = DispatchQueue(label: "com.kuberwastaken.megaphone.capture.session")
-    private let sampleBufferQueue = DispatchQueue(label: "com.kuberwastaken.megaphone.capture.samples")
+    private let sessionQueue = DispatchQueue(label: "com.qoodeng.zarathustra.capture.session")
+    private let sampleBufferQueue = DispatchQueue(label: "com.qoodeng.zarathustra.capture.samples")
     private var activeAudioFile: AVAudioFile?
     private var activeAudioFormat: AVAudioFormat?
     private var recordedFrameCount: AVAudioFramePosition = 0
@@ -317,7 +317,18 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
             }
         }
 
-        return shouldKeepFile ? finalizedURL : nil
+        return Self.finalizeTemporaryRecording(at: finalizedURL, shouldKeep: shouldKeepFile)
+    }
+
+    /// Kept internal so lifecycle regression tests can verify that every
+    /// discard path removes the temporary WAV before its URL is forgotten.
+    static func finalizeTemporaryRecording(at url: URL?, shouldKeep: Bool) -> URL? {
+        guard let url else { return nil }
+        if shouldKeep {
+            return url
+        }
+        try? FileManager.default.removeItem(at: url)
+        return nil
     }
 
     private func handleSessionInterrupted(_ notification: Notification) {
@@ -389,6 +400,10 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 settings: settings,
                 commonFormat: targetFormat.commonFormat,
                 interleaved: targetFormat.isInterleaved
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: outputURL.path
             )
             activeAudioFile = audioFile
             activeAudioFormat = targetFormat
@@ -663,6 +678,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                     tempFileURL = nil
                 }
             }
+            try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
 

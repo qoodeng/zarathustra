@@ -3,7 +3,7 @@ import {AbsoluteFill, OffthreadVideo, staticFile} from 'remotion';
 
 export const demoDuration = 418;
 
-export const MegaphoneIntro: React.FC = () => (
+export const ZarathustraIntro: React.FC = () => (
   <AbsoluteFill style={{backgroundColor: '#0b0e10'}}>
     <OffthreadVideo
       src={staticFile('latest-demo.mp4')}

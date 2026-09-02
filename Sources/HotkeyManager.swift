@@ -1,5 +1,6 @@
 import Cocoa
 
+@MainActor
 final class HotkeyManager {
     private let backend = GlobalShortcutBackend()
     private var configuration = ShortcutConfiguration(
@@ -52,10 +53,6 @@ final class HotkeyManager {
         backend.onCancelKeyPressed = nil
         backend.onMouseButtonEvent = nil
         inputState = ShortcutInputState()
-    }
-
-    deinit {
-        stop()
     }
 
     private func handleInputEvent(_ event: ShortcutInputEvent) -> ShortcutConsumeDecision {
