@@ -55,10 +55,6 @@ final class HotkeyManager {
         inputState = ShortcutInputState()
     }
 
-    deinit {
-        stop()
-    }
-
     private func handleInputEvent(_ event: ShortcutInputEvent) -> ShortcutConsumeDecision {
         let result = ShortcutMatcher.reduce(
             state: inputState,
