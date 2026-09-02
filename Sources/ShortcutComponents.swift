@@ -1,0 +1,487 @@
+import SwiftUI
+import AppKit
+
+struct DictationShortcutEditor: View {
+    @EnvironmentObject var appState: AppState
+
+    let showsIntroText: Bool
+    let onCaptureStateChange: ((Bool) -> Void)?
+
+    @State private var activeCaptureRole: ShortcutRole?
+    @State private var holdValidationMessage: String?
+    @State private var toggleValidationMessage: String?
+    @State private var copyAgainValidationMessage: String?
+    @State private var cancelValidationMessage: String?
+
+    init(showsIntroText: Bool = true, onCaptureStateChange: ((Bool) -> Void)? = nil) {
+        self.showsIntroText = showsIntroText
+        self.onCaptureStateChange = onCaptureStateChange
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if showsIntroText {
+                Text("Hold to record, tap to start and stop, and press the toggle shortcut while holding to latch into tap mode. You can disable either workflow or turn both shortcuts off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if appState.holdShortcut.isDisabled && appState.toggleShortcut.isDisabled {
+                Label("Both dictation shortcuts are disabled.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            ShortcutRoleSection(
+                role: .hold,
+                selection: appState.holdShortcut,
+                validationMessage: holdValidationMessage,
+                isCapturing: Binding(
+                    get: { activeCaptureRole == .hold },
+                    set: { activeCaptureRole = $0 ? .hold : nil }
+                ),
+                onSelect: { binding in
+                    holdValidationMessage = appState.setShortcut(binding, for: .hold)
+                }
+            )
+
+            ShortcutRoleSection(
+                role: .toggle,
+                selection: appState.toggleShortcut,
+                validationMessage: toggleValidationMessage,
+                isCapturing: Binding(
+                    get: { activeCaptureRole == .toggle },
+                    set: { activeCaptureRole = $0 ? .toggle : nil }
+                ),
+                onSelect: { binding in
+                    toggleValidationMessage = appState.setShortcut(binding, for: .toggle)
+                }
+            )
+
+            ShortcutRoleSection(
+                role: .copyAgain,
+                selection: appState.copyAgainShortcut,
+                validationMessage: copyAgainValidationMessage,
+                isCapturing: Binding(
+                    get: { activeCaptureRole == .copyAgain },
+                    set: { activeCaptureRole = $0 ? .copyAgain : nil }
+                ),
+                onSelect: { binding in
+                    copyAgainValidationMessage = appState.setShortcut(binding, for: .copyAgain)
+                }
+            )
+
+            CancelShortcutSection(
+                selection: appState.cancelShortcut,
+                validationMessage: cancelValidationMessage,
+                isCapturing: Binding(
+                    get: { activeCaptureRole == .cancel },
+                    set: { activeCaptureRole = $0 ? .cancel : nil }
+                ),
+                onSelect: { binding in
+                    cancelValidationMessage = appState.setShortcut(binding, for: .cancel)
+                }
+            )
+
+            Text("Custom shortcuts can use regular keys, modifier-only shortcuts, or modifier combinations.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if appState.usesFnShortcut {
+                Text("Tip: If Fn opens the Emoji picker, go to System Settings > Keyboard and change \"Press fn key to\" to \"Do Nothing\".")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: activeCaptureRole) { role in
+            onCaptureStateChange?(role != nil)
+        }
+        .onDisappear {
+            onCaptureStateChange?(false)
+        }
+    }
+}
+
+struct ShortcutRoleSection: View {
+    @EnvironmentObject var appState: AppState
+    let role: ShortcutRole
+    let selection: ShortcutBinding
+    let validationMessage: String?
+    @Binding var isCapturing: Bool
+    let onSelect: (ShortcutBinding) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(role.title)
+                .font(.subheadline.weight(.semibold))
+
+            VStack(spacing: 6) {
+                ShortcutPresetRow(
+                    title: "Disabled",
+                    isSelected: selection.isDisabled,
+                    action: { onSelect(.disabled) }
+                )
+
+                ForEach(ShortcutPreset.allCases) { preset in
+                    ShortcutPresetRow(
+                        title: preset.title,
+                        isSelected: selection == preset.binding,
+                        action: { onSelect(preset.binding) }
+                    )
+                }
+
+                ShortcutCaptureRow(
+                    savedBinding: appState.savedCustomShortcut(for: role),
+                    isSelected: selection.isCustom,
+                    isCapturing: $isCapturing,
+                    onSelectSaved: onSelect,
+                    onCapture: onSelect
+                )
+            }
+
+            if let validationMessage, !validationMessage.isEmpty {
+                Label(validationMessage, systemImage: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+/// Settings row for the cancel-dictation key. Unlike the dictation roles it
+/// cannot be disabled and has a single Escape default instead of the preset
+/// list; selecting the default row doubles as reset-to-default.
+struct CancelShortcutSection: View {
+    @EnvironmentObject var appState: AppState
+    let selection: ShortcutBinding
+    let validationMessage: String?
+    @Binding var isCapturing: Bool
+    let onSelect: (ShortcutBinding) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(ShortcutRole.cancel.title)
+                .font(.subheadline.weight(.semibold))
+
+            Text("Press this key while dictating or transcribing to cancel without pasting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 6) {
+                ShortcutPresetRow(
+                    title: "Esc (Default)",
+                    isSelected: selection == .defaultCancel,
+                    action: { onSelect(.defaultCancel) }
+                )
+
+                ShortcutCaptureRow(
+                    savedBinding: appState.savedCustomShortcut(for: .cancel),
+                    isSelected: selection != .defaultCancel,
+                    isCapturing: $isCapturing,
+                    onSelectSaved: onSelect,
+                    onCapture: onSelect
+                )
+            }
+
+            if let validationMessage, !validationMessage.isEmpty {
+                Label(validationMessage, systemImage: "xmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+private struct ShortcutPresetRow: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                Text(title)
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(12)
+            .background(isSelected ? Color.blue.opacity(0.1) : Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Shows the bound mouse dictation button and lets the user rebind it by
+/// pressing the desired button while capture is armed. Capture uses a local
+/// NSEvent monitor (the press must land on a window of this app), and the
+/// global tap is suspended meanwhile so the currently bound button cannot
+/// start dictation mid-capture.
+struct MouseDictationButtonRow: View {
+    @EnvironmentObject var appState: AppState
+
+    @State private var isCapturing = false
+    @State private var captureMonitor: Any?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "computermouse")
+                        .foregroundStyle(isCapturing ? .blue : .secondary)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(MouseDictationButton.displayName(for: appState.mouseDictationButton))
+                            .font(.system(.body, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(isCapturing ? "Waiting for a mouse button…" : "Hold this button to dictate.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+                .padding(12)
+                .background(isCapturing ? Color.blue.opacity(0.1) : Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isCapturing ? Color.blue : Color.clear, lineWidth: 1.5)
+                )
+
+                Button(isCapturing ? "Cancel" : "Change…") {
+                    if isCapturing {
+                        cancelCapture()
+                    } else {
+                        startCapture()
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if isCapturing {
+                Label(
+                    "With the pointer over this window, press the mouse button you want. Middle and side buttons only — left and right clicks keep working normally.",
+                    systemImage: "computermouse"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.blue)
+            }
+        }
+        .onChange(of: appState.isMouseDictationEnabled) { _, enabled in
+            if !enabled {
+                cancelCapture()
+            }
+        }
+        .onDisappear {
+            cancelCapture()
+        }
+    }
+
+    private func startCapture() {
+        cancelCapture()
+        isCapturing = true
+        appState.suspendHotkeyMonitoringForShortcutCapture()
+        captureMonitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { event in
+            guard MouseDictationButton.isBindable(event.buttonNumber) else { return event }
+            appState.mouseDictationButton = event.buttonNumber
+            cancelCapture()
+            return nil
+        }
+    }
+
+    private func cancelCapture() {
+        if let monitor = captureMonitor {
+            NSEvent.removeMonitor(monitor)
+            captureMonitor = nil
+        }
+        guard isCapturing else { return }
+        isCapturing = false
+        appState.resumeHotkeyMonitoringAfterShortcutCapture()
+    }
+}
+
+private struct ShortcutCaptureRow: View {
+    let savedBinding: ShortcutBinding?
+    let isSelected: Bool
+    @Binding var isCapturing: Bool
+    let onSelectSaved: (ShortcutBinding) -> Void
+    let onCapture: (ShortcutBinding) -> Void
+
+    @State private var captureBackend: LocalShortcutCaptureBackend?
+    @State private var captureInputState = ShortcutInputState()
+    @State private var currentBinding: ShortcutBinding?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Button {
+                    if let savedBinding {
+                        onSelectSaved(savedBinding)
+                    } else if !isCapturing {
+                        startCapture()
+                    }
+                } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : (savedBinding == nil ? "plus.circle" : "circle"))
+                            .foregroundStyle(isSelected ? .blue : .secondary)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(displayedBindingName)
+                                .font(displayedBindingUsesMonospace ? .system(.body, design: .monospaced).weight(.semibold) : .body)
+                                .foregroundStyle(.primary)
+                            Text(displayedBindingSubtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(isSelected ? Color.blue.opacity(0.1) : Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 1.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isCapturing)
+
+                Button(isCapturing ? "Done" : "Record…") {
+                    if isCapturing {
+                        finishCapture()
+                    } else {
+                        startCapture()
+                    }
+                }
+                .buttonStyle(.bordered)
+
+                if isCapturing {
+                    Button("Cancel") {
+                        cancelCapture()
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if isCapturing {
+                Label(
+                    currentBinding == nil
+                        ? "Press and hold the shortcut you want."
+                        : "Press Esc or Enter to save.",
+                    systemImage: "keyboard"
+                )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.blue)
+            }
+        }
+        .onDisappear {
+            stopCapture(clearCaptureState: true)
+        }
+    }
+
+    private func startCapture() {
+        stopCapture(clearCaptureState: false)
+        isCapturing = true
+        captureInputState = ShortcutInputState()
+        currentBinding = nil
+
+        let backend = LocalShortcutCaptureBackend()
+        backend.onInputEvent = { inputEvent in
+            let result = ShortcutMatcher.reduce(
+                state: captureInputState,
+                event: inputEvent,
+                configuration: .disabled
+            )
+            captureInputState = result.state
+
+            guard case .modifierChanged(let keyCode, _) = inputEvent else { return }
+            if let binding = ShortcutBinding.fromModifierKeyCode(
+                keyCode,
+                pressedModifierKeyCodes: captureInputState.pressedModifierKeyCodes,
+                allowBareModifier: true
+            ) {
+                currentBinding = binding
+            }
+        }
+        backend.onKeyDownEvent = { event in
+            let isReturnKey = event.keyCode == 36 || event.keyCode == 76
+            let hasPendingCapture = currentBinding != nil
+
+            if isReturnKey && hasPendingCapture {
+                finishCapture()
+                return
+            }
+            if event.keyCode == 53 && hasPendingCapture {
+                finishCapture()
+                return
+            }
+
+            guard !ShortcutBinding.modifierKeyCodes.contains(event.keyCode) else {
+                return
+            }
+
+            guard let binding = ShortcutBinding.from(
+                event: event,
+                pressedModifierKeyCodes: captureInputState.pressedModifierKeyCodes
+            ) else {
+                return
+            }
+
+            currentBinding = binding
+        }
+        backend.start()
+        captureBackend = backend
+    }
+
+    private func finishCapture() {
+        guard let currentBinding else {
+            cancelCapture()
+            return
+        }
+        onCapture(currentBinding)
+        stopCapture(clearCaptureState: true)
+    }
+
+    private func cancelCapture() {
+        stopCapture(clearCaptureState: true)
+    }
+
+    private func stopCapture(clearCaptureState: Bool) {
+        captureBackend?.stop()
+        captureBackend = nil
+        captureInputState = ShortcutInputState()
+        currentBinding = nil
+        if clearCaptureState {
+            isCapturing = false
+        }
+    }
+
+    private var displayedBindingName: String {
+        if let currentBinding {
+            currentBinding.displayName
+        } else if let savedBinding {
+            savedBinding.displayName
+        } else {
+            "Custom Shortcut"
+        }
+    }
+
+    private var displayedBindingSubtitle: String {
+        if isCapturing {
+            return currentBinding == nil ? "Recording shortcut…" : "Recorded shortcut"
+        }
+        return savedBinding == nil ? "Record any key combo." : "Saved custom shortcut"
+    }
+
+    private var displayedBindingUsesMonospace: Bool {
+        currentBinding != nil || savedBinding != nil
+    }
+}

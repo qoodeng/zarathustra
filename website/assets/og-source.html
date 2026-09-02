@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1200,initial-scale=1">
+  <title>Megaphone social preview</title>
+  <style>
+    *{box-sizing:border-box}html,body{width:1200px;height:630px;margin:0;overflow:hidden;background:#050505;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue",sans-serif}
+    .frame{position:relative;width:100%;height:100%;overflow:hidden;background:#050505}
+    .waves{position:absolute;inset:54px 0 0;display:flex;align-items:flex-end;gap:12px;padding:0 8px}
+    .waves i{flex:1;height:var(--h);border-radius:999px 999px 0 0;background:linear-gradient(to top,rgba(255,255,255,.26),rgba(255,255,255,.025))}
+    .veil{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(5,5,5,.48),transparent 34%,transparent 82%);pointer-events:none}
+    .word{position:absolute;z-index:2;left:50%;top:48%;transform:translate(-50%,-50%);white-space:nowrap;font-size:194px;line-height:.8;font-weight:760;letter-spacing:-.085em;text-shadow:0 6px 28px #000,0 25px 72px rgba(0,0,0,.65)}
+  </style>
+</head>
+<body>
+  <main class="frame"><div class="waves" id="waves" aria-hidden="true"></div><div class="veil"></div><div class="word">Megaphone</div></main>
+  <script>
+    const root=document.querySelector('#waves'),heights=[.52,.72,.86,.91,.8,.63,.45,.68,.77,.76,.59,.43,.38,.55,.72,.79,.58,.42,.35,.48,.63,.84,.85,.73,.48,.39,.61,.77,.82,.69,.51,.42,.57,.79,.83,.72,.54,.45];for(let n=0;n<heights.length;n++){const bar=document.createElement('i');bar.style.setProperty('--h',`${150+430*heights[n]}px`);root.append(bar)}
+  </script>
+</body>
+</html>

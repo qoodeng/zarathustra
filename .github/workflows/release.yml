@@ -1,0 +1,201 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    env:
+      HAS_SIGNING: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select latest Xcode (macOS 26 SDK required)
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          fi
+          xcodebuild -version
+          xcrun --show-sdk-version
+
+      - name: Resolve release version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use semantic versioning, for example v0.3.1." >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp app version
+        run: |
+          plutil -replace CFBundleShortVersionString -string "${{ steps.version.outputs.version }}" Info.plist
+          plutil -replace CFBundleVersion -string "${{ github.run_number }}" Info.plist
+          plutil -replace MegaphoneBuildTag -string "${{ steps.version.outputs.tag }}" Info.plist
+
+      - name: Build release notes from changelog
+        id: release_notes
+        run: |
+          .github/scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > "$RUNNER_TEMP/release-notes.md"
+          {
+            echo "body<<EOF"
+            cat "$RUNNER_TEMP/release-notes.md"
+            echo
+            echo "## Download"
+            echo
+            echo "**[Megaphone.dmg](https://github.com/Kuberwastaken/megaphone/releases/download/${{ steps.version.outputs.tag }}/Megaphone.dmg)** — requires macOS 26 (Tahoe) on Apple silicon."
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run deterministic tests
+        run: make test
+
+      - name: Install build tools
+        run: brew install create-dmg fileicon
+
+      # --- Code signing setup ---
+      # Required GitHub secrets:
+      #   DEVELOPER_ID_CERTIFICATE_BASE64 — base64-encoded .p12 Developer ID certificate
+      #   DEVELOPER_ID_CERTIFICATE_PASSWORD — password for the .p12
+      #   APPLE_ID — Apple ID email for notarization
+      #   APPLE_TEAM_ID — 10-character Apple Team ID
+      #   APPLE_APP_PASSWORD — app-specific password for notarization
+      - name: Use ad-hoc signing (no Developer ID secrets configured)
+        if: env.HAS_SIGNING != 'true'
+        run: echo 'CODESIGN_IDENTITY=-' >> "$GITHUB_ENV"
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer_id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 20)"
+
+          # Decode certificate
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Keep a PEM copy of the leaf cert so a self-signed identity can
+          # be added to the trust store below.
+          openssl pkcs12 -in "$CERTIFICATE_PATH" -clcerts -nokeys \
+            -passin "pass:$CERTIFICATE_PASSWORD" -out "$RUNNER_TEMP/signing_cert.pem"
+
+          # Import certificate and delete .p12 from disk immediately
+          security import "$CERTIFICATE_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+
+          # Allow codesign to access the keychain without UI prompt
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add temporary keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # Self-signed identities are not trusted by default and would be
+          # invisible to find-identity -v; add the cert to the system trust
+          # store first in that case.
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -q '"'; then
+            sudo security add-trusted-cert -d -r trustRoot \
+              -k /Library/Keychains/System.keychain "$RUNNER_TEMP/signing_cert.pem"
+          fi
+
+          # Extract signing identity; fall back to ad-hoc rather than failing
+          # the release when no usable identity exists.
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "No valid signing identity found - falling back to ad-hoc" >&2
+            IDENTITY="-"
+          fi
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "Found signing identity: $IDENTITY"
+
+      - name: Store notarization credentials
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --keychain "$KEYCHAIN_PATH"
+
+      # --- Build universal ---
+      - name: Build universal
+        run: make ARCH=universal APP_NAME=Megaphone BUNDLE_ID=com.kuberwastaken.megaphone CODESIGN_IDENTITY="$CODESIGN_IDENTITY"
+
+      - name: Create universal DMG
+        run: make dmg ARCH=universal APP_NAME=Megaphone BUNDLE_ID=com.kuberwastaken.megaphone CODESIGN_IDENTITY="$CODESIGN_IDENTITY"
+
+      - name: Sign universal DMG
+        run: codesign --force --sign "$CODESIGN_IDENTITY" build/Megaphone.dmg
+
+      - name: Notarize universal DMG
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
+        run: |
+          xcrun notarytool submit build/Megaphone.dmg \
+            --keychain-profile "notarytool-profile" \
+            --keychain "$KEYCHAIN_PATH" \
+            --wait
+          xcrun stapler staple build/Megaphone.dmg
+
+      - name: Save universal DMG
+        run: mv build/Megaphone.dmg Megaphone.dmg
+
+      # --- Release ---
+      - name: Create Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Megaphone ${{ steps.version.outputs.version }}
+          body: ${{ steps.release_notes.outputs.body }}
+          generate_release_notes: false
+          make_latest: true
+          files: |
+            Megaphone.dmg
+
+      - name: Refresh release information on website
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
+
+      # --- Cleanup ---
+      - name: Cleanup signing artifacts
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/developer_id.p12"
+          KPATH="${KEYCHAIN_PATH:-$RUNNER_TEMP/signing.keychain-db}"
+          if [ -f "$KPATH" ]; then
+            security delete-keychain "$KPATH"
+          fi
