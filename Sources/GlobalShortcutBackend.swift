@@ -49,7 +49,15 @@ final class GlobalShortcutBackend {
     }
 
     deinit {
-        stop()
+        // Global-actor deinitializers are nonisolated. These Core Foundation
+        // handles are exclusively owned by the backend and may be invalidated
+        // directly without invoking actor-isolated callbacks during teardown.
+        if let source = eventTapRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        if let tap = eventTap {
+            CFMachPortInvalidate(tap)
+        }
     }
 
     private func installEventTap() throws {
