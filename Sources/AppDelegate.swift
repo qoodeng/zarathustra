@@ -161,10 +161,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            if self?.setupWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor [weak self] in
+                if self?.setupWindow == nil {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+                self?.settingsWindow = nil
             }
-            self?.settingsWindow = nil
         }
     }
 
