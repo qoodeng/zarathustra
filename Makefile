@@ -13,6 +13,7 @@ APP_EXECUTABLE_TARGET := $(subst $(space),\ ,$(APP_EXECUTABLE))
 SOURCES = $(shell find Sources -name '*.swift' -type f | LC_ALL=C sort)
 LAUNCHER_SOURCES = $(shell find Launcher -name '*.swift' -type f | LC_ALL=C sort)
 TEST_RUNNER = $(BUILD_DIR)/ZarathustraTests
+# High-risk platform sources exercised by remediation regression tests.
 REMEDIATION_TEST_SOURCES = Sources/AppName.swift Sources/PipelineHistoryItem.swift Sources/PipelineHistoryStore.swift Sources/LiveAudioLevelNormalizer.swift Sources/AudioRecorder.swift Sources/SpeechAnalyzerService.swift Sources/ScreenTextService.swift Tests/RemediationRegressionTests.swift
 RESOURCES = $(CONTENTS)/Resources
 ARCH ?= $(shell uname -m)
