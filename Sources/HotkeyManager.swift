@@ -1,5 +1,6 @@
 import Cocoa
 
+@MainActor
 final class HotkeyManager {
     private let backend = GlobalShortcutBackend()
     private var configuration = ShortcutConfiguration(

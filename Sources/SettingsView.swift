@@ -1597,19 +1597,52 @@ struct RunLogView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Run Log")
-                        .font(.headline)
-                    Text("Stored locally. Only the \(appState.maxPipelineHistoryCount) most recent runs are kept.")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Run Log")
+                            .font(.headline)
+                        Text(appState.persistRunHistory
+                             ? "Raw and final transcripts are stored locally for the selected retention period."
+                             : "History is memory-only and will be discarded when Zarathustra quits.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Button("Clear History") {
+                        appState.clearPipelineHistory()
+                    }
+                    .disabled(appState.pipelineHistory.isEmpty)
+                }
+
+                Toggle("Persist run history across launches", isOn: $appState.persistRunHistory)
+
+                Picker("Delete persisted history after", selection: $appState.runHistoryRetentionDays) {
+                    Text("1 day").tag(1)
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!appState.persistRunHistory)
+
+                Toggle("Retain WAV audio for retry", isOn: $appState.retainRunAudio)
+                    .disabled(!appState.persistRunHistory)
+                Text("Off by default. Changing this affects new recordings; Clear History removes retained audio.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                Toggle("Retain diagnostic context", isOn: $appState.retainDiagnosticHistory)
+                    .disabled(!appState.persistRunHistory)
+                Text("When enabled, entries may include selected text, window metadata, prompts, and custom vocabulary. Visible-window text can be present inside a saved command prompt.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                if let warning = appState.pipelineHistoryStoreWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
                 }
-                Spacer()
-                Button("Clear History") {
-                    appState.clearPipelineHistory()
-                }
-                .disabled(appState.pipelineHistory.isEmpty)
             }
             .padding(.horizontal, 24)
             .padding(.top, 20)

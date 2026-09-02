@@ -1,7 +1,8 @@
 import SwiftUI
 import FoundationModels
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     var setupWindow: NSWindow?
     private var settingsWindow: NSWindow?
@@ -100,14 +101,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                guard let self = self else { return }
-                if !self.appState.hasCompletedSetup {
-                    self.appState.hasCompletedSetup = true
-                    self.appState.startHotkeyMonitoring()
-                    self.appState.startAccessibilityPolling()
-                    NSApp.setActivationPolicy(.accessory)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if !self.appState.hasCompletedSetup {
+                        self.appState.hasCompletedSetup = true
+                        self.appState.startHotkeyMonitoring()
+                        self.appState.startAccessibilityPolling()
+                        NSApp.setActivationPolicy(.accessory)
+                    }
+                    self.setupWindow = nil
                 }
-                self.setupWindow = nil
             }
         }
     }

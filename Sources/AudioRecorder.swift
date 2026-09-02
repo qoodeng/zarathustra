@@ -317,7 +317,18 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
             }
         }
 
-        return shouldKeepFile ? finalizedURL : nil
+        return Self.finalizeTemporaryRecording(at: finalizedURL, shouldKeep: shouldKeepFile)
+    }
+
+    /// Kept internal so lifecycle regression tests can verify that every
+    /// discard path removes the temporary WAV before its URL is forgotten.
+    static func finalizeTemporaryRecording(at url: URL?, shouldKeep: Bool) -> URL? {
+        guard let url else { return nil }
+        if shouldKeep {
+            return url
+        }
+        try? FileManager.default.removeItem(at: url)
+        return nil
     }
 
     private func handleSessionInterrupted(_ notification: Notification) {
@@ -389,6 +400,10 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                 settings: settings,
                 commonFormat: targetFormat.commonFormat,
                 interleaved: targetFormat.isInterleaved
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: outputURL.path
             )
             activeAudioFile = audioFile
             activeAudioFormat = targetFormat
@@ -663,6 +678,7 @@ final class AudioRecorder: NSObject, ObservableObject, AVCaptureAudioDataOutputS
                     tempFileURL = nil
                 }
             }
+            try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
 

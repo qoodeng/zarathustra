@@ -17,6 +17,7 @@ enum GlobalShortcutBackendError: LocalizedError {
     }
 }
 
+@MainActor
 final class GlobalShortcutBackend {
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
@@ -70,7 +71,12 @@ final class GlobalShortcutBackend {
             }
 
             let backend = Unmanaged<GlobalShortcutBackend>.fromOpaque(userInfo).takeUnretainedValue()
-            return backend.handleEventTap(type: type, event: event)
+            // The tap source is installed exclusively on the main run loop.
+            // Make that runtime guarantee explicit at the C callback boundary
+            // so all shortcut state stays main-actor isolated.
+            return MainActor.assumeIsolated {
+                backend.handleEventTap(type: type, event: event)
+            }
         }
 
         guard let tap = CGEvent.tapCreate(
