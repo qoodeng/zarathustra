@@ -13,6 +13,7 @@ APP_EXECUTABLE_TARGET := $(subst $(space),\ ,$(APP_EXECUTABLE))
 SOURCES = $(shell find Sources -name '*.swift' -type f | LC_ALL=C sort)
 LAUNCHER_SOURCES = $(shell find Launcher -name '*.swift' -type f | LC_ALL=C sort)
 TEST_RUNNER = $(BUILD_DIR)/ZarathustraTests
+REMEDIATION_TEST_SOURCES = Sources/AppName.swift Sources/PipelineHistoryItem.swift Sources/PipelineHistoryStore.swift Sources/AudioRecorder.swift Sources/SpeechAnalyzerService.swift Sources/ScreenTextService.swift Tests/RemediationRegressionTests.swift
 RESOURCES = $(CONTENTS)/Resources
 ARCH ?= $(shell uname -m)
 
@@ -34,7 +35,7 @@ ICON_SOURCE = Resources/AppIcon-Source.png
 ICON_ICNS = Resources/AppIcon.icns
 endif
 
-.PHONY: all clean run icon dmg codesign-dmg notarize test
+.PHONY: all clean run icon dmg codesign-dmg notarize test security-test
 
 all: $(APP_EXECUTABLE_TARGET)
 
@@ -101,17 +102,20 @@ endif
 	@codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --entitlements Zarathustra.entitlements "$(APP_BUNDLE)"
 	@echo "Built $(APP_BUNDLE)"
 
-test: $(TEST_RUNNER)
+test: security-test $(TEST_RUNNER)
 	@$(TEST_RUNNER)
 
-$(TEST_RUNNER): Sources/AppContextService.swift Sources/AppleFoundationModelsPostProcessor.swift Sources/DictionaryStore.swift Sources/TranscriptTidier.swift Sources/TransformStore.swift Sources/WakePhraseMatcher.swift Tests/AppContextServiceTests.swift Tests/DictionaryStoreTests.swift Tests/TranscriptTidierTests.swift Tests/TransformStoreTests.swift Tests/WakePhraseMatcherTests.swift Sources/ScratchCommandMatcher.swift Tests/ScratchCommandMatcherTests.swift Sources/RawRevertEligibility.swift Tests/RawRevertEligibilityTests.swift Sources/ShortcutCore/ShortcutModels.swift Tests/ShortcutCancelBindingTests.swift Sources/ShortcutCore/MouseDictationButton.swift Tests/MouseDictationButtonTests.swift Tests/SmartCleanupValidationTests.swift Tests/StructuredOutputUnwrapTests.swift
+security-test:
+	@bash .github/scripts/security-regression-check.sh
+
+$(TEST_RUNNER): Sources/AppContextService.swift Sources/AppleFoundationModelsPostProcessor.swift Sources/DictionaryStore.swift Sources/TranscriptTidier.swift Sources/TransformStore.swift Sources/WakePhraseMatcher.swift Tests/AppContextServiceTests.swift Tests/DictionaryStoreTests.swift Tests/TranscriptTidierTests.swift Tests/TransformStoreTests.swift Tests/WakePhraseMatcherTests.swift Sources/ScratchCommandMatcher.swift Tests/ScratchCommandMatcherTests.swift Sources/RawRevertEligibility.swift Tests/RawRevertEligibilityTests.swift Sources/ShortcutCore/ShortcutModels.swift Tests/ShortcutCancelBindingTests.swift Sources/ShortcutCore/MouseDictationButton.swift Tests/MouseDictationButtonTests.swift Tests/SmartCleanupValidationTests.swift Tests/StructuredOutputUnwrapTests.swift $(REMEDIATION_TEST_SOURCES)
 	@mkdir -p "$(BUILD_DIR)"
 	swiftc \
 		-parse-as-library \
 		-o "$(TEST_RUNNER)" \
 		-sdk $(shell xcrun --show-sdk-path) \
 		-target $(ARCH)-apple-macosx26.0 \
-		Sources/AppContextService.swift Sources/AppleFoundationModelsPostProcessor.swift Sources/DictionaryStore.swift Sources/TranscriptTidier.swift Sources/TransformStore.swift Sources/WakePhraseMatcher.swift Tests/AppContextServiceTests.swift Tests/DictionaryStoreTests.swift Tests/TranscriptTidierTests.swift Tests/TransformStoreTests.swift Tests/WakePhraseMatcherTests.swift Sources/ScratchCommandMatcher.swift Tests/ScratchCommandMatcherTests.swift Sources/RawRevertEligibility.swift Tests/RawRevertEligibilityTests.swift Sources/ShortcutCore/ShortcutModels.swift Tests/ShortcutCancelBindingTests.swift Sources/ShortcutCore/MouseDictationButton.swift Tests/MouseDictationButtonTests.swift Tests/SmartCleanupValidationTests.swift Tests/StructuredOutputUnwrapTests.swift
+		Sources/AppContextService.swift Sources/AppleFoundationModelsPostProcessor.swift Sources/DictionaryStore.swift Sources/TranscriptTidier.swift Sources/TransformStore.swift Sources/WakePhraseMatcher.swift Tests/AppContextServiceTests.swift Tests/DictionaryStoreTests.swift Tests/TranscriptTidierTests.swift Tests/TransformStoreTests.swift Tests/WakePhraseMatcherTests.swift Sources/ScratchCommandMatcher.swift Tests/ScratchCommandMatcherTests.swift Sources/RawRevertEligibility.swift Tests/RawRevertEligibilityTests.swift Sources/ShortcutCore/ShortcutModels.swift Tests/ShortcutCancelBindingTests.swift Sources/ShortcutCore/MouseDictationButton.swift Tests/MouseDictationButtonTests.swift Tests/SmartCleanupValidationTests.swift Tests/StructuredOutputUnwrapTests.swift $(REMEDIATION_TEST_SOURCES)
 
 icon: $(ICON_ICNS)
 
