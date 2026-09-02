@@ -1,10 +1,27 @@
-# Megaphone Step 1 Review
+# Zarathustra Step 1 Review of Megaphone
 
 Date: 2026-09-02  
 Reviewed upstream commit: `5a9136b3ac8c766e24a5d79ac056df4d427968f1`  
 Scope: architecture, security, privacy, reliability, concurrency, persistence, permissions, updater/release path, and test coverage.
 
 Model transcription and rewrite quality were deliberately treated as acceptable and were not benchmarked or compared.
+
+## Remediation status
+
+Implemented on `codex/review-remediation` after the audit:
+
+- Rebranded the app, bundle, wake phrase, repository links, update endpoint, release artifacts, website, and build defaults as Zarathustra while preserving upstream attribution.
+- Made stable releases fail closed without every signing/notarization secret; verified Developer ID Team ID, designated requirement, strict signatures, notarization, and stapler result; pinned GitHub Actions by commit SHA.
+- Bound updater cancellation to the actual byte-transfer task and added cancellation gates before mount, validation, staging, and helper launch.
+- Passed the expected designated requirement and bundle ID into the replacement helper and revalidated the staged app, installed destination, and rollback copy.
+- Removed destructive history-store recovery. Failed stores remain untouched while the app displays a warning and uses memory-only history for that session.
+- Added configurable persistence and 1/7/30-day retention, made WAV retention and diagnostic context opt-in, minimized default history fields, hardened file permissions, and reconciled orphan WAV files only after a healthy store load.
+- Deleted discarded/error WAV files before clearing their URLs and added secure-field filtering to both accessibility context paths.
+- Bounded pre-setup PCM buffering to ten seconds and the analyzer stream to 256 inputs, with file-based fallback if either bound is exceeded.
+- Main-actor isolated `AppState` and the shortcut event-tap state, and snapshot mutable dictation settings before asynchronous processing.
+- Added macOS CI, full-app ad-hoc build coverage, focused retention/audio/buffer/context tests, and a static security regression gate.
+
+Local verification in this Linux workspace is limited to the security regression script, shell syntax, and `git diff --check`; Swift tests and the complete app build remain the agreed macOS follow-up gate.
 
 ## Executive verdict
 
