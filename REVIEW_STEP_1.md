@@ -188,5 +188,4 @@ Recommendation: keep the stronger and accurate claim—transcription and cleanup
 - Searched for network, process execution, filesystem persistence, unsafe concurrency declarations, force operations, and sensitive logging.
 - `git diff --check` passes for the local overlay-animation change made after the audit.
 - Tests could not run in this workspace: it is Linux and has neither Swift nor Xcode/macOS 26 SDK (`make test` fails at the missing `xcrun`/`swiftc` tools). The full app and animation therefore require verification on macOS 26.
-- The GitHub fork itself could not be created because GitHub's SMS verification endpoint rejected the authenticated cloud-browser flow. The local clone remains based on the exact upstream commit above.
-
+- `qoodeng/zarathustra` was initialized from the exact Git tree at upstream commit `5a9136b3ac8c766e24a5d79ac056df4d427968f1`; the review and overlay change live on `codex/step-1-review`. Because the destination began as an empty standalone repository rather than a GitHub-native fork, earlier upstream commit history is not present before the import commit.
