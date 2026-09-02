@@ -3198,3 +3198,717 @@ final class AppState: ObservableObject {
                         self.lastPostProcessedTranscript = trimmedFinalTranscript
                         self.lastPostProcessingStatus = processingStatus
                         if case .dictation = sessionIntent {
+                            switch result.outcome {
+                            case .deterministicCleanup, .smartCleanupSucceeded:
+                                DictionaryStore.shared.observe(
+                                    candidateTerms: DictionaryTermLearner.candidates(from: trimmedFinalTranscript)
+                                )
+                            default:
+                                break
+                            }
+                            if !trimmedFinalTranscript.isEmpty {
+                                DictionaryStore.shared.recordUsage(in: trimmedFinalTranscript)
+                            }
+                        }
+                        self.recordPipelineHistoryEntry(
+                            rawTranscript: trimmedRawTranscript,
+                            postProcessedTranscript: trimmedFinalTranscript,
+                            postProcessingPrompt: result.prompt,
+                            systemPrompt: Self.resolvedSystemPrompt(sessionConfiguration.customSystemPrompt),
+                            context: appContext,
+                            processingStatus: processingStatus,
+                            intent: sessionIntent,
+                            audioFileName: savedAudioFile?.fileName
+                        )
+                        self.transcriptionTask = nil
+                        self.transcribingAudioFileName = nil
+                        self.lastTranscript = trimmedFinalTranscript
+                        self.isTranscribing = false
+                        self.endCriticalDictationActivity()
+                        self.debugStatusMessage = "Done"
+                        let completionStatusText = self.preserveClipboard ? "Pasted at cursor!" : "Copied to clipboard!"
+                        let enterOnlyStatusText = "Pressed Enter"
+                        let shouldPressEnterAfterPaste = parsedTranscript.shouldPressEnterAfterPaste
+
+                        let shouldPersistRawDictationFallback: Bool
+                        switch result.outcome {
+                        case .smartCleanupFallback:
+                            shouldPersistRawDictationFallback = !trimmedFinalTranscript.isEmpty
+                        default:
+                            shouldPersistRawDictationFallback = false
+                        }
+
+                        if trimmedFinalTranscript.isEmpty {
+                            self.statusText = shouldPressEnterAfterPaste ? enterOnlyStatusText : "Nothing to transcribe"
+                            self.clearPendingOverlayDismissToken()
+                            if !self.showPostTranscriptionUpdateReminderIfNeeded() {
+                                self.overlayManager.dismiss()
+                            }
+                            if shouldPressEnterAfterPaste {
+                                self.pressEnterWhenShortcutReleased()
+                            }
+                        } else {
+                            self.statusText = completionStatusText
+                            if shouldPersistRawDictationFallback {
+                                self.scheduleOverlayDismissAfterFailureIndicator(after: 2.5)
+                            } else {
+                                self.clearPendingOverlayDismissToken()
+                                if !self.showPostTranscriptionUpdateReminderIfNeeded() {
+                                    self.overlayManager.dismiss()
+                                }
+                            }
+
+                            let pendingClipboardRestore = self.writeTranscriptToPasteboard(trimmedFinalTranscript)
+                            self.pasteAtCursorWhenShortcutReleased(performPaste: false) {
+                                if let replacementTarget = result.replacementTarget {
+                                    _ = self.contextService.selectTextImmediatelyBeforeCaret(
+                                        matching: replacementTarget
+                                    )
+                                }
+                                self.pasteAtCursor()
+                                if shouldPressEnterAfterPaste {
+                                    self.pressEnterAfterPaste {
+                                        self.restoreClipboardIfNeeded(pendingClipboardRestore)
+                                    }
+                                } else {
+                                    self.restoreClipboardIfNeeded(pendingClipboardRestore)
+                                }
+                            }
+                        }
+
+                        self.audioRecorder.cleanup()
+                        self.refreshAvailableMicrophonesIfNeeded()
+
+                        self.scheduleReadyStatusReset(after: 3, matching: [completionStatusText, "Nothing to transcribe", enterOnlyStatusText])
+                    }
+                } catch is CancellationError {
+                    await MainActor.run {
+                        self.transcriptionTask = nil
+                        self.endCriticalDictationActivity()
+                    }
+                } catch {
+                    let resolvedContext: AppContext
+                    if let sessionContext {
+                        resolvedContext = sessionContext
+                    } else if let inFlightContext = await inFlightContextTask?.value {
+                        resolvedContext = inFlightContext
+                    } else {
+                        resolvedContext = self.fallbackContextAtStop()
+                    }
+                    await MainActor.run {
+                        guard self.isTranscribing else { return }
+                        self.transcriptionTask = nil
+                        self.transcribingAudioFileName = nil
+                        let userFacingErrorMessage = self.formattedTranscriptionError(error)
+                        self.errorMessage = userFacingErrorMessage
+                        self.isTranscribing = false
+                        self.endCriticalDictationActivity()
+                        self.statusText = "Error"
+                        self.overlayManager.showError(userFacingErrorMessage)
+                        self.lastPostProcessedTranscript = ""
+                        self.lastRawTranscript = ""
+                        self.lastContextSummary = ""
+                        self.lastPostProcessingStatus = "Error: \(error.localizedDescription)"
+                        self.lastPostProcessingPrompt = ""
+                        self.lastContextScreenshotDataURL = nil
+                        self.lastContextScreenshotStatus = "Not captured (local-only)"
+                        self.recordPipelineHistoryEntry(
+                            rawTranscript: "",
+                            postProcessedTranscript: "",
+                            postProcessingPrompt: "",
+                            systemPrompt: Self.resolvedSystemPrompt(sessionConfiguration.customSystemPrompt),
+                            context: resolvedContext,
+                            processingStatus: "Error: \(error.localizedDescription)",
+                            intent: sessionIntent,
+                            audioFileName: savedAudioFile?.fileName
+                        )
+                        self.audioRecorder.cleanup()
+                        self.refreshAvailableMicrophonesIfNeeded()
+                    }
+                }
+            }
+        }
+    }
+
+    static func resolvedSystemPrompt(_ customSystemPrompt: String) -> String {
+        customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppleFoundationModelsPostProcessor.dictationInstructions
+            : customSystemPrompt
+    }
+
+    private func recordPipelineHistoryEntry(
+        rawTranscript: String,
+        postProcessedTranscript: String,
+        postProcessingPrompt: String,
+        systemPrompt: String,
+        context: AppContext,
+        processingStatus: String,
+        intent: SessionIntent,
+        audioFileName: String? = nil
+    ) {
+        let includeDiagnostics = retainDiagnosticHistory
+        let newEntry = PipelineHistoryItem(
+            intent: intent.persistedIntent,
+            selectedText: includeDiagnostics ? intent.persistedSelectedText : nil,
+            capturedSelection: includeDiagnostics ? context.selectedText : nil,
+            timestamp: Date(),
+            rawTranscript: rawTranscript,
+            postProcessedTranscript: postProcessedTranscript,
+            postProcessingPrompt: includeDiagnostics ? postProcessingPrompt : nil,
+            systemPrompt: includeDiagnostics ? systemPrompt : nil,
+            contextSummary: includeDiagnostics ? context.contextSummary : "",
+            contextSystemPrompt: nil,
+            contextPrompt: nil,
+            contextScreenshotDataURL: nil,
+            contextScreenshotStatus: "Not captured (local-only)",
+            postProcessingStatus: processingStatus,
+            debugStatus: includeDiagnostics ? debugStatusMessage : "",
+            customVocabulary: includeDiagnostics ? dictionaryVocabulary : "",
+            audioFileName: audioFileName,
+            contextAppName: includeDiagnostics ? context.appName : nil,
+            contextBundleIdentifier: includeDiagnostics ? context.bundleIdentifier : nil,
+            contextWindowTitle: includeDiagnostics ? context.windowTitle : nil
+        )
+
+        guard persistRunHistory else {
+            pipelineHistory.insert(newEntry, at: 0)
+            pipelineHistory = Array(pipelineHistory.prefix(maxPipelineHistoryCount))
+            return
+        }
+
+        do {
+            var removedAudioFileNames = try pipelineHistoryStore.append(
+                newEntry,
+                maxCount: maxPipelineHistoryCount
+            )
+            removedAudioFileNames += try pipelineHistoryStore.trim(
+                to: maxPipelineHistoryCount,
+                olderThan: Calendar.current.date(
+                    byAdding: .day,
+                    value: -runHistoryRetentionDays,
+                    to: Date()
+                )
+            )
+            for audioFileName in removedAudioFileNames {
+                Self.deleteAudioFile(audioFileName)
+            }
+            pipelineHistory = pipelineHistoryStore.loadAllHistory()
+        } catch {
+            if let audioFileName {
+                Self.deleteAudioFile(audioFileName)
+            }
+            errorMessage = "Unable to save run history entry: \(error.localizedDescription)"
+        }
+    }
+
+    /// Terminal handling for a whole-utterance "scratch that" dictation: the
+    /// utterance is never pasted; instead the previously inserted dictation
+    /// is deleted when it still sits immediately before the caret.
+    @MainActor
+    private func completeScratchCommand(
+        previousText: String?,
+        rawTranscript: String,
+        context: AppContext,
+        audioFileName: String?
+    ) {
+        lastContextSummary = context.contextSummary
+        lastContextScreenshotDataURL = nil
+        lastContextScreenshotStatus = "Not captured (local-only)"
+        lastContextAppName = context.appName ?? ""
+        lastContextBundleIdentifier = context.bundleIdentifier ?? ""
+        lastContextWindowTitle = context.windowTitle ?? ""
+        lastContextSelectedText = context.selectedText ?? ""
+        lastContextLLMPrompt = ""
+        lastPostProcessingPrompt = ""
+        lastRawTranscript = rawTranscript
+        lastPostProcessedTranscript = ""
+        transcriptionTask = nil
+        transcribingAudioFileName = nil
+        isTranscribing = false
+        endCriticalDictationActivity()
+        debugStatusMessage = "Done"
+        clearPendingOverlayDismissToken()
+        audioRecorder.cleanup()
+        refreshAvailableMicrophonesIfNeeded()
+
+        guard let previousText else {
+            finishScratchCommand(
+                scratched: false,
+                rawTranscript: rawTranscript,
+                context: context,
+                audioFileName: audioFileName
+            )
+            return
+        }
+
+        // Selecting and deleting synthesizes key events, so wait for the
+        // dictation shortcut to be fully released — the same discipline the
+        // paste path follows.
+        performAfterShortcutReleased { [weak self] in
+            guard let self else { return }
+            let scratched = self.contextService.selectTextImmediatelyBeforeCaret(matching: previousText)
+            if scratched {
+                self.pressDelete()
+                // Forget the deleted dictation so a second "scratch that"
+                // cannot select-and-delete unrelated text that happens to
+                // match it.
+                self.previousDictationInvalidatedAt = Date()
+            }
+            self.finishScratchCommand(
+                scratched: scratched,
+                rawTranscript: rawTranscript,
+                context: context,
+                audioFileName: audioFileName
+            )
+        }
+    }
+
+    private func finishScratchCommand(
+        scratched: Bool,
+        rawTranscript: String,
+        context: AppContext,
+        audioFileName: String?
+    ) {
+        let status = scratched ? "Scratched last dictation" : "Nothing to scratch"
+        lastPostProcessingStatus = status
+        recordPipelineHistoryEntry(
+            rawTranscript: rawTranscript,
+            postProcessedTranscript: "",
+            postProcessingPrompt: "",
+            systemPrompt: Self.resolvedSystemPrompt(customSystemPrompt),
+            context: context,
+            processingStatus: status,
+            intent: .dictation,
+            audioFileName: audioFileName
+        )
+        statusText = status
+        if scratched {
+            overlayManager.dismiss()
+        } else {
+            overlayManager.showError("Nothing to scratch")
+        }
+        scheduleReadyStatusReset(after: 3, matching: [status])
+    }
+
+    /// Start streaming microphone audio into the on-device SpeechAnalyzer.
+    /// PCM16 samples (24 kHz mono) are analyzed while the user is still
+    /// speaking, so the transcript is essentially ready at stop time. Setup
+    /// failures are deferred: they surface in `commitAndAwaitFinal()` and the
+    /// pipeline falls back to file-based analysis.
+    private func startNativeStreamingSession() {
+        let session = SpeechAnalyzerStreamingSession(
+            localePreference: transcriptionLanguage,
+            vocabulary: speechRecognitionVocabulary
+        )
+        session.start()
+        nativeStreamingSession = session
+        audioRecorder.onPCM16Samples = { [weak session] data in
+            session?.appendPCM16(data)
+        }
+    }
+
+    private func tearDownNativeStreamingSession() {
+        audioRecorder.onPCM16Samples = nil
+        nativeStreamingSession?.cancel()
+        nativeStreamingSession = nil
+        if let sessionID = smartCleanupSessionID {
+            smartCleanupSessionID = nil
+            Task { await AppleFoundationModelsPostProcessor.shared.cancel(sessionID: sessionID) }
+        }
+    }
+
+    private func startContextCapture() {
+        contextCaptureTask?.cancel()
+        capturedContext = nil
+        lastContextSummary = "Collecting app context..."
+        lastPostProcessingStatus = ""
+        lastContextScreenshotDataURL = nil
+        lastContextScreenshotStatus = "Not captured (local-only)"
+
+        contextCaptureTask = Task { [weak self] in
+            guard let self else { return nil }
+            let context = await self.contextService.collectContext()
+            await MainActor.run {
+                self.capturedContext = context
+                self.lastContextSummary = context.contextSummary
+                self.lastContextScreenshotDataURL = nil
+                self.lastContextScreenshotStatus = "Not captured (local-only)"
+                self.lastContextAppName = context.appName ?? ""
+                self.lastContextBundleIdentifier = context.bundleIdentifier ?? ""
+                self.lastContextWindowTitle = context.windowTitle ?? ""
+                self.lastContextSelectedText = context.selectedText ?? ""
+                self.lastContextLLMPrompt = ""
+                self.lastPostProcessingStatus = "App context captured"
+            }
+            return context
+        }
+    }
+
+    private func fallbackContextAtStop() -> AppContext {
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let windowTitle = focusedWindowTitle(for: frontmostApp)
+        return AppContext(
+            appName: frontmostApp?.localizedName,
+            bundleIdentifier: frontmostApp?.bundleIdentifier,
+            windowTitle: windowTitle,
+            selectedText: nil,
+            textBeforeCaret: nil,
+            currentActivity: "Could not refresh app context at stop time; using text-only post-processing."
+        )
+    }
+
+    private func focusedWindowTitle(for app: NSRunningApplication?) -> String? {
+        guard let app else { return nil }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        return focusedWindowTitle(from: appElement)
+    }
+
+    private func focusedWindowTitle(from appElement: AXUIElement) -> String? {
+        guard let focusedWindow = accessibilityElement(from: appElement, attribute: kAXFocusedWindowAttribute as CFString) else {
+            return nil
+        }
+
+        guard let windowTitle = accessibilityString(from: focusedWindow, attribute: kAXTitleAttribute as CFString) else {
+            return nil
+        }
+
+        return trimmedText(windowTitle)
+    }
+
+    private func accessibilityElement(from element: AXUIElement, attribute: CFString) -> AXUIElement? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success,
+              let rawValue = value,
+              CFGetTypeID(rawValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return unsafeBitCast(rawValue, to: AXUIElement.self)
+    }
+
+    private func accessibilityString(from element: AXUIElement, attribute: CFString) -> String? {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard result == .success, let stringValue = value as? String else { return nil }
+        return stringValue
+    }
+
+    private func trimmedText(_ value: String) -> String? {
+        let trimmed = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func toggleDebugOverlay() {
+        if isDebugOverlayActive {
+            stopDebugOverlay()
+        } else {
+            startDebugOverlay()
+        }
+    }
+
+    private func startDebugOverlay() {
+        isDebugOverlayActive = true
+        clearPendingOverlayDismissToken()
+        overlayManager.showRecording()
+
+        // Simulate audio levels with a timer
+        var phase: Double = 0.0
+        debugOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                phase += 0.15
+                // Generate a fake audio level that oscillates like speech
+                let base = 0.3 + 0.2 * sin(phase)
+                let noise = Float.random(in: -0.15...0.15)
+                let level = min(max(Float(base) + noise, 0.0), 1.0)
+                self.overlayManager.updateAudioLevel(level)
+            }
+        }
+    }
+
+    private func stopDebugOverlay() {
+        debugOverlayTimer?.invalidate()
+        debugOverlayTimer = nil
+        isDebugOverlayActive = false
+        clearPendingOverlayDismissToken()
+        overlayManager.dismiss()
+    }
+
+    private func clearPendingOverlayDismissToken() {
+        pendingOverlayDismissToken = nil
+    }
+
+    @MainActor
+    private func showPostTranscriptionUpdateReminderIfNeeded() -> Bool {
+        if debugShowsUpdateReminderAfterDictation {
+            showDebugUpdateAvailableOverlay()
+            return true
+        }
+
+        let updateManager = UpdateManager.shared
+        guard updateManager.shouldShowPostTranscriptionReminder() else { return false }
+
+        let dismissToken = UUID()
+        pendingOverlayDismissToken = dismissToken
+        updateManager.markPostTranscriptionReminderShown()
+        overlayManager.showUpdateAvailable(version: updateManager.latestReleaseVersion)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + postTranscriptionUpdateReminderDuration) { [weak self] in
+            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
+            self.pendingOverlayDismissToken = nil
+            self.overlayManager.dismiss()
+        }
+
+        return true
+    }
+
+    @MainActor
+    func showDebugUpdateAvailableOverlay() {
+        let updateManager = UpdateManager.shared
+        let version = updateManager.latestReleaseVersion.isEmpty ? "9.9.9" : updateManager.latestReleaseVersion
+        let dismissToken = UUID()
+        if isDebugOverlayActive || debugOverlayTimer != nil {
+            stopDebugOverlay()
+        }
+        pendingOverlayDismissToken = dismissToken
+        overlayManager.showUpdateAvailable(version: version)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + postTranscriptionUpdateReminderDuration) { [weak self] in
+            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
+            self.pendingOverlayDismissToken = nil
+            self.overlayManager.dismiss()
+        }
+    }
+
+    @MainActor
+    private func handleUpdateOverlayPressed() {
+        clearPendingOverlayDismissToken()
+        overlayManager.dismiss()
+        selectedSettingsTab = .general
+        NotificationCenter.default.post(name: .showSettings, object: nil)
+
+        DispatchQueue.main.async {
+            if UpdateManager.shared.updateAvailable {
+                UpdateManager.shared.showUpdateAlert()
+            }
+        }
+    }
+
+    private func scheduleOverlayDismissAfterFailureIndicator(after delay: TimeInterval) {
+        let dismissToken = UUID()
+        pendingOverlayDismissToken = dismissToken
+        overlayManager.showFailureIndicator()
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.pendingOverlayDismissToken == dismissToken else { return }
+            self.pendingOverlayDismissToken = nil
+            self.overlayManager.dismiss()
+        }
+    }
+
+    func toggleDebugPanel() {
+        selectedSettingsTab = .runLog
+        NotificationCenter.default.post(name: .showSettings, object: nil)
+    }
+
+    private func pasteAtCursor() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let vKeyCode = keyCodeForCharacter("v") ?? 9
+
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
+        keyDown?.flags = .maskCommand
+        keyDown?.post(tap: .cgSessionEventTap)
+
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
+        keyUp?.flags = .maskCommand
+        keyUp?.post(tap: .cgSessionEventTap)
+    }
+
+    private func keyCodeForCharacter(_ character: String) -> CGKeyCode? {
+        guard let char = character.lowercased().utf16.first else { return nil }
+        let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        guard let layoutDataRef = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let layoutData = unsafeBitCast(layoutDataRef, to: CFData.self) as Data
+        return layoutData.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) -> CGKeyCode? in
+            guard let layout = ptr.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else {
+                return nil
+            }
+            for keyCode in UInt16(0)..<UInt16(128) {
+                var chars = [UniChar](repeating: 0, count: 4)
+                var charCount = 0
+                var deadKeyState: UInt32 = 0
+                let status = UCKeyTranslate(
+                    layout, keyCode, UInt16(kUCKeyActionDisplay), 0,
+                    UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                    &deadKeyState, 4, &charCount, &chars
+                )
+                if status == noErr, charCount > 0, chars[0] == char {
+                    return CGKeyCode(keyCode)
+                }
+            }
+            return nil
+        }
+    }
+
+    private func pressEnter() {
+        let source = CGEventSource(stateID: .hidSystemState)
+
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: true)
+        keyDown?.post(tap: .cgSessionEventTap)
+
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 36, keyDown: false)
+        keyUp?.post(tap: .cgSessionEventTap)
+    }
+
+    /// Synthesizes a Delete (backspace, kVK_Delete = 51) key press. With the
+    /// previous dictation selected via `selectTextImmediatelyBeforeCaret`, a
+    /// single Delete removes the whole selection.
+    private func pressDelete() {
+        let source = CGEventSource(stateID: .hidSystemState)
+
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true)
+        keyDown?.post(tap: .cgSessionEventTap)
+
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
+        keyUp?.post(tap: .cgSessionEventTap)
+    }
+
+    /// Writes the final transcript to the system pasteboard.
+    /// Also handles appending necessary trailing spaces, declaring transient
+    /// types for clipboard managers, and saving the clipboard state for later restoration.
+    /// - Parameter transcript: The text to be pasted.
+    /// - Returns: A `PendingClipboardRestore` object if clipboard preservation is enabled, otherwise nil.
+    private func writeTranscriptToPasteboard(_ transcript: String) -> PendingClipboardRestore? {
+        let pasteboard = NSPasteboard.general
+        let snapshot = preserveClipboard ? PreservedPasteboardSnapshot(pasteboard: pasteboard) : nil
+
+        // Append a space when ending with sentence-ending punctuation so the
+        // next dictation does not jam against the prior period.
+        let textToWrite: String
+        if let last = transcript.last, ".!?".contains(last) {
+            textToWrite = transcript + " "
+        } else {
+            textToWrite = transcript
+        }
+
+        if keepDictationInClipboardHistory {
+            // Plain write so clipboard managers record the dictation in history.
+            pasteboard.clearContents()
+            pasteboard.setString(textToWrite, forType: .string)
+        } else {
+            // Declare standard transient types alongside .string so well-behaved
+            // clipboard managers (Maccy, Raycast, Paste, Clipy, Flycut, etc.) skip
+            // recording this entry in their history. The text still pastes normally
+            // via Cmd-V — only clipboard history is affected.
+            //
+            // See: https://github.com/nicke5012/TransientPasteboardType
+            let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+            let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+            let autoGeneratedType = NSPasteboard.PasteboardType("org.nspasteboard.AutoGeneratedType")
+            let legacyTransientType = NSPasteboard.PasteboardType("de.petermaurer.TransientPasteboardType")
+
+            pasteboard.declareTypes([
+                .string,
+                transientType,
+                concealedType,
+                autoGeneratedType,
+                legacyTransientType
+            ], owner: nil)
+
+            pasteboard.setString(textToWrite, forType: .string)
+
+            // Populate empty values for the marker types — some clipboard managers
+            // check the data presence rather than just the declared type.
+            pasteboard.setString("", forType: transientType)
+            pasteboard.setString("", forType: concealedType)
+            pasteboard.setString("", forType: autoGeneratedType)
+            pasteboard.setString("", forType: legacyTransientType)
+        }
+
+        guard let snapshot else { return nil }
+        return PendingClipboardRestore(
+            snapshot: snapshot,
+            expectedChangeCount: pasteboard.changeCount,
+            writtenTranscript: textToWrite
+        )
+    }
+
+    private func restoreClipboardIfNeeded(_ pendingRestore: PendingClipboardRestore?) {
+        guard let pendingRestore else { return }
+
+        // Some apps consume Cmd-V asynchronously, so restoring too quickly can paste
+        // the pre-dictation clipboard instead of the transcript.
+        DispatchQueue.main.asyncAfter(deadline: .now() + clipboardRestoreDelay) {
+            let pasteboard = NSPasteboard.general
+            // A bare changeCount check is too strict: browsers, iCloud Universal
+            // Clipboard sync, and other background apps bump the change count
+            // without the user copying anything, which left the transcript
+            // stranded on the clipboard. Restore when nothing changed, or when the
+            // clipboard still holds exactly the transcript we wrote (so the user
+            // has not deliberately copied something new that we would clobber).
+            let clipboardStillHoldsTranscript =
+                pasteboard.string(forType: .string) == pendingRestore.writtenTranscript
+            guard pasteboard.changeCount == pendingRestore.expectedChangeCount
+                || clipboardStillHoldsTranscript else { return }
+            pendingRestore.snapshot.restore(to: pasteboard)
+        }
+    }
+
+    private func performAfterShortcutReleased(attempt: Int = 0, action: @escaping () -> Void) {
+        let maxAttempts = 24
+        if hotkeyManager.hasPressedShortcutInputs && attempt < maxAttempts {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) { [weak self] in
+                self?.performAfterShortcutReleased(attempt: attempt + 1, action: action)
+            }
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteAfterShortcutReleaseDelay) {
+            action()
+        }
+    }
+
+    private func pasteAtCursorWhenShortcutReleased(
+        performPaste: Bool = true,
+        completion: (() -> Void)? = nil
+    ) {
+        performAfterShortcutReleased { [weak self] in
+            if performPaste {
+                self?.pasteAtCursor()
+            }
+            completion?()
+        }
+    }
+
+    private func pressEnterWhenShortcutReleased(completion: (() -> Void)? = nil) {
+        performAfterShortcutReleased { [weak self] in
+            self?.pressEnter()
+            completion?()
+        }
+    }
+
+    private func pressEnterAfterPaste(completion: (() -> Void)? = nil) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + pressEnterAfterPasteDelay) { [weak self] in
+            self?.pressEnter()
+            completion?()
+        }
+    }
+
+    private func cancelRecordingInitializationTimer() {
+        recordingInitializationTimer?.cancel()
+        recordingInitializationTimer = nil
+    }
+
+    private func scheduleReadyStatusReset(after delay: TimeInterval, matching statuses: Set<String>? = nil) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            if let statuses, !statuses.contains(self.statusText) {
+                return
+            }
+            self.statusText = "Ready"
+        }
+    }
+}
