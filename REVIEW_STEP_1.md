@@ -21,7 +21,7 @@ Implemented on `codex/review-remediation` after the audit:
 - Main-actor isolated `AppState` and the shortcut event-tap state, and snapshot mutable dictation settings before asynchronous processing.
 - Added macOS CI, full-app ad-hoc build coverage, focused retention/audio/buffer/context tests, and a static security regression gate.
 
-Local verification in this Linux workspace is limited to the security regression script, shell syntax, and `git diff --check`; Swift tests and the complete app build remain the agreed macOS follow-up gate.
+Local verification in this Linux workspace is limited to the security regression script, shell syntax, and `git diff --check`. The draft PR's macOS CI now passes the Swift regression executable and complete ad-hoc app build. Hands-on microphone, permission, overlay, and installer smoke tests remain the agreed macOS follow-up.
 
 ## Executive verdict
 
@@ -204,5 +204,6 @@ Recommendation: keep the stronger and accurate claim—transcription and cleanup
 - Reviewed all primary runtime, persistence, context capture, updater, launcher, entitlement, build, and release-workflow paths at the pinned commit.
 - Searched for network, process execution, filesystem persistence, unsafe concurrency declarations, force operations, and sensitive logging.
 - `git diff --check` passes for the local overlay-animation change made after the audit.
-- Tests could not run in this workspace: it is Linux and has neither Swift nor Xcode/macOS 26 SDK (`make test` fails at the missing `xcrun`/`swiftc` tools). The full app and animation therefore require verification on macOS 26.
+- Tests cannot run directly in this Linux workspace because it has neither Xcode nor the macOS 26 SDK. GitHub Actions on macOS 26 successfully ran the security regression gate, Swift regression executable, and complete ad-hoc app build for the remediation branch.
+- Microphone capture, permission prompts, overlay animation, paste injection, updater cancellation, and replacement-helper behavior still require hands-on smoke testing on a Mac.
 - `qoodeng/zarathustra` was initialized from the exact Git tree at upstream commit `5a9136b3ac8c766e24a5d79ac056df4d427968f1`; the review and overlay change live on `codex/step-1-review`. Because the destination began as an empty standalone repository rather than a GitHub-native fork, earlier upstream commit history is not present before the import commit.
