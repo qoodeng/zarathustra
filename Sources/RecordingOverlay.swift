@@ -76,6 +76,7 @@ final class RecordingOverlayManager {
     private var overlayWindow: NSPanel?
     private let overlayState = RecordingOverlayState()
     private var lockedOverlayWidth: CGFloat?
+    private var pendingDismissID: UUID?
 
     var onStopButtonPressed: (() -> Void)?
     var onUpdateOverlayPressed: (() -> Void)?
@@ -241,6 +242,7 @@ final class RecordingOverlayManager {
 
     private func showOverlayPanel(animatedResize: Bool) {
         let frame = overlayFrame
+        pendingDismissID = nil
 
         if let panel = overlayWindow {
             panel.ignoresMouseEvents = !overlayAcceptsMouseEvents
@@ -256,17 +258,26 @@ final class RecordingOverlayManager {
         panel.ignoresMouseEvents = !overlayAcceptsMouseEvents
         panel.contentView = makeOverlayContent(frame: frame)
 
-        guard let screen = targetScreen else { return }
+        guard targetScreen != nil else { return }
 
-        let hiddenFrame = NSRect(x: frame.origin.x, y: screen.frame.maxY, width: frame.width, height: frame.height)
-        panel.setFrame(hiddenFrame, display: true)
-        panel.alphaValue = 1
+        // Reveal from the screen center instead of dropping the complete pill
+        // into the menu bar at once. Keeping the midpoint fixed makes the
+        // surface grow equally into its left and right wings.
+        panel.setFrame(collapsedFrame(for: frame), display: true)
+        panel.alphaValue = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0
         panel.orderFrontRegardless()
 
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            panel.setFrame(frame, display: true)
+            overlayWindow = panel
+            return
+        }
+
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1.0)
+            context.duration = 0.24
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.82, 0.24, 1.0)
             panel.animator().setFrame(frame, display: true)
+            panel.animator().alphaValue = 1
         }
 
         overlayWindow = panel
@@ -327,7 +338,7 @@ final class RecordingOverlayManager {
     }
 
     private func resize(panel: NSPanel, to frame: NSRect, animated: Bool) {
-        guard animated else {
+        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             panel.setFrame(frame, display: true)
             return
         }
@@ -337,6 +348,24 @@ final class RecordingOverlayManager {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().setFrame(frame, display: true)
         }
+    }
+
+    /// A narrow frame with the same midpoint and vertical placement as the
+    /// expanded overlay. On notched displays the physical notch is the visual
+    /// seed; elsewhere a small pill remains visible while the surface opens.
+    private func collapsedFrame(for expandedFrame: NSRect) -> NSRect {
+        let seedWidth: CGFloat
+        if screenHasNotch {
+            seedWidth = min(notchWidth, expandedFrame.width)
+        } else {
+            seedWidth = min(18, expandedFrame.width)
+        }
+        return NSRect(
+            x: expandedFrame.midX - seedWidth / 2,
+            y: expandedFrame.minY,
+            width: seedWidth,
+            height: expandedFrame.height
+        )
     }
 
     /// True iff the overlay renders as wings flanking the notch (notched display
@@ -454,14 +483,36 @@ final class RecordingOverlayManager {
         lockedOverlayWidth = nil
         overlayState.isCommandMode = false
         overlayState.updateVersion = ""
-        if let panel = overlayWindow {
+        guard let panel = overlayWindow else { return }
+
+        let finishDismissal = { [weak self, weak panel] in
+            guard let self, let panel, self.overlayWindow === panel else { return }
             panel.orderOut(nil)
             // orderOut alone leaves the panel retained in NSApp.windows with its
             // SwiftUI hierarchy mounted — repeatForever animations keep flushing
             // Core Animation forever. Unmount and close so the panel deallocates.
             panel.contentView = nil
             panel.close()
-            overlayWindow = nil
+            self.overlayWindow = nil
+            self.pendingDismissID = nil
+        }
+
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            finishDismissal()
+            return
+        }
+
+        let dismissID = UUID()
+        pendingDismissID = dismissID
+        let collapsedFrame = collapsedFrame(for: panel.frame)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().setFrame(collapsedFrame, display: true)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            guard self?.pendingDismissID == dismissID else { return }
+            finishDismissal()
         }
     }
 }
