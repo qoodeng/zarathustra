@@ -196,6 +196,8 @@ final class UpdateManager: ObservableObject {
     private let postTranscriptionReminderInterval: TimeInterval = 24 * 60 * 60 // 1 day
     private var periodicTimer: Timer?
     private var activeDownloadTask: Task<Void, Never>?
+    private var activeTransferTask: Task<Int, Error>?
+    private var activeTransferID: UUID?
 
     private init() {
         lastCheckDate = UserDefaults.standard.object(forKey: "updateLastCheckDate") as? Date
@@ -729,7 +731,10 @@ final class UpdateManager: ObservableObject {
 
     func cancelDownload() {
         activeDownloadTask?.cancel()
+        activeTransferTask?.cancel()
         activeDownloadTask = nil
+        activeTransferTask = nil
+        activeTransferID = nil
         downloadProgress = nil
         updateStatus = .idle
     }
@@ -793,6 +798,7 @@ final class UpdateManager: ObservableObject {
 
             // Run the byte-iteration and file I/O off the main thread
             let mgr = self
+            let transferID = UUID()
             let downloadTask = Task.detached {
                 defer { try? outputHandle.close() }
                 var receivedBytes = 0
@@ -828,8 +834,21 @@ final class UpdateManager: ObservableObject {
                 }
                 return receivedBytes
             }
+            activeTransferTask = downloadTask
+            activeTransferID = transferID
+            defer {
+                if activeTransferID == transferID {
+                    activeTransferTask = nil
+                    activeTransferID = nil
+                }
+            }
 
-            let receivedBytes = try await downloadTask.value
+            let receivedBytes = try await withTaskCancellationHandler {
+                try await downloadTask.value
+            } onCancel: {
+                downloadTask.cancel()
+            }
+            try Task.checkCancellation()
             if expectedSize > 0 && receivedBytes != expectedSize {
                 throw NSError(domain: "UpdateManager", code: 4, userInfo: [
                     NSLocalizedDescriptionKey: "Downloaded update size did not match the release asset"
@@ -850,6 +869,11 @@ final class UpdateManager: ObservableObject {
             return
         }
 
+        guard !Task.isCancelled else {
+            try? fm.removeItem(at: tempDir)
+            return
+        }
+
         // MARK: Install phase - mount DMG, extract app
         updateStatus = .installing
         downloadProgress = nil
@@ -858,6 +882,7 @@ final class UpdateManager: ObservableObject {
             let mountPoint = try await Task.detached {
                 try self.mountDMG(at: dmgPath)
             }.value
+            try Task.checkCancellation()
 
             defer {
                 // Always try to detach
@@ -888,9 +913,11 @@ final class UpdateManager: ObservableObject {
                     try self.validateStagedApp(
                         stagedApp,
                         currentApp: Bundle.main.bundleURL,
+                        expectedBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.qoodeng.zarathustra",
                         expectedVersion: expectedVersion
                     )
                 }.value
+                try Task.checkCancellation()
 
                 // Clean up DMG (detach happens in defer above, delete temp dir)
                 try? fm.removeItem(at: tempDir)
@@ -958,10 +985,11 @@ final class UpdateManager: ObservableObject {
     nonisolated private func validateStagedApp(
         _ stagedApp: URL,
         currentApp: URL,
+        expectedBundleIdentifier: String,
         expectedVersion: String
     ) throws {
         guard let info = NSDictionary(contentsOf: stagedApp.appendingPathComponent("Contents/Info.plist")),
-              info["CFBundleIdentifier"] as? String == "com.qoodeng.zarathustra",
+              info["CFBundleIdentifier"] as? String == expectedBundleIdentifier,
               info["CFBundleShortVersionString"] as? String == expectedVersion else {
             throw NSError(domain: "UpdateManager", code: 5, userInfo: [
                 NSLocalizedDescriptionKey: "The downloaded app has an unexpected identity or version"
@@ -1015,7 +1043,7 @@ final class UpdateManager: ObservableObject {
                 NSLocalizedDescriptionKey: "Could not verify the app publisher"
             ])
         }
-        return requirement
+        return String(requirement.dropFirst("designated => ".count))
     }
 
     private func replaceAndRelaunch(
@@ -1025,6 +1053,8 @@ final class UpdateManager: ObservableObject {
     ) throws {
         let currentAppPath = Bundle.main.bundlePath
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let expectedBundleIdentifier = Bundle.main.bundleIdentifier ?? "com.qoodeng.zarathustra"
+        let expectedRequirement = try designatedRequirement(of: Bundle.main.bundleURL)
         let pid = String(ProcessInfo.processInfo.processIdentifier)
         let backupPath = stagingDir.appendingPathComponent("Zarathustra Backup.app").path
         let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -1043,12 +1073,17 @@ final class UpdateManager: ObservableObject {
             sleep 0.2
         done
         kill -0 "$1" 2>/dev/null && { echo "timed out waiting for app to quit"; exit 1; }
+        /usr/bin/codesign --verify --deep --strict -R="$9" "$3" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$3/Contents/Info.plist")" = "$10" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$3/Contents/Info.plist")" = "$6" \
+            || { echo "staged app changed after validation; refusing update"; exit 1; }
         /usr/bin/ditto "$2" "$5" \
-            && /usr/bin/codesign --verify --deep --strict "$5" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$5" \
             || { echo "backup failed; leaving staged files at $4"; exit 1; }
         if /usr/bin/find "$2" -mindepth 1 -delete \
             && /usr/bin/ditto "$3" "$2" \
-            && /usr/bin/codesign --verify --deep --strict "$2" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$2" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$2/Contents/Info.plist")" = "$10" \
             && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$2/Contents/Info.plist")" = "$6"; then
             echo "install verified; relaunching $6"
             if /usr/bin/open "$2"; then
@@ -1061,7 +1096,8 @@ final class UpdateManager: ObservableObject {
         fi
         if /usr/bin/find "$2" -mindepth 1 -delete \
             && /usr/bin/ditto "$5" "$2" \
-            && /usr/bin/codesign --verify --deep --strict "$2" \
+            && /usr/bin/codesign --verify --deep --strict -R="$9" "$2" \
+            && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$2/Contents/Info.plist")" = "$10" \
             && test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$2/Contents/Info.plist")" = "$8" \
             && /usr/bin/open "$2"; then
             echo "rollback verified; relaunched $8"
@@ -1081,7 +1117,9 @@ final class UpdateManager: ObservableObject {
                              backupPath,          // $5
                              expectedVersion,     // $6
                              logPath,             // $7
-                             currentVersion]      // $8
+                             currentVersion,      // $8
+                             expectedRequirement, // $9
+                             expectedBundleIdentifier] // $10
         try process.run()
 
         // Quit only after the durable helper successfully launches.
